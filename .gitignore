@@ -1,0 +1,15 @@
+# NXContainer Repository Exclusions
+#
+# 排除生成的二进制、打包产物与依赖目录。
+#
+# Author:
+# MoyuZJ <moyuzj@nextorix.dev> @Nextorix
+# Made in China with ♥
+#
+# Copyright (C) 2026 Nextorix LLC.
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# 本机及交叉编译产物
+bin/
+*.tgz
+node_modules/

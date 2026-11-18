@@ -44,6 +44,15 @@ Windows 11 amd64，Go 1.27.4，Node.js 24.21.0。使用当前开发账户和临�
 - 改后用 `CGO_ENABLED=0`、分别设置 `GOOS=windows/linux` 和 `GOARCH=amd64/arm64`，四种目标配置复扫均为 0 条高严重性告警、0 条包加载错误，无 `#nosec` 排除。四个重建产物的 `govulncheck -mode=binary` 均未命中已知漏洞。上述结果限于相应扫描规则及 Go 代码范围，并非独立安全审计。
 - 改后 Windows x64 后台无交互复测，`go test -count=1 ./...`、`go vet ./...`、`npm test`（31 通过、0 失败、仅 Linux 专项跳过）、打包验收及示例均通过。
 
+### Alpine 3.24 本地虚拟机复验
+
+在本机 QEMU 中串行启动 Alpine 3.24 amd64 和 arm64 客体，每台配置 1 个 vCPU、1024 MiB 内存，使用只读测试介质和各自的临时虚拟磁盘。安装后的系统以普通用户执行测试，使用发行版的非 setuid bubblewrap 0.12.0；未放宽沙箱权限。
+
+- 两种架构的 Go 测试均通过；Node 测试各 20 项通过、0 项失败，仅跳过 Windows 专项。Linux 隔离、只读共享、文件接口、取消和输出限制的集成用例实际执行通过。
+- 两种架构的离线安装及仓库外消费端功能验收均通过，两台虚拟机均在退出码为 0 后关机。
+- 初次运行中，软件模拟下 Node 子进程启动和 npm 打包超过测试工具的等待期限。复验显式使用 `NXCONTAINER_TEST_SLOW=1`，只调整协议测试子进程启动等待、Linux 集成测试父进程就绪等待及打包验收等待；默认测试期限、专门测试超时的断言和产品运行限制不变。
+- 此结果仅验证了该 Alpine 客体配置。GitHub Actions 的 Ubuntu 24.04 托管环境仍因 AppArmor 策略未通过集成验收；`validation: 'pending'` 保持不变。
+
 ## 初始化提交记录的验证
 
 - `npm test`：31 项，30 项通过，1 项 Linux 集成测试标记待验证并跳过。

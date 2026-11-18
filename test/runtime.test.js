@@ -133,7 +133,8 @@ test('Linux 待验证：原生隔离、只读共享、文件接口、取消与�
   parent.stderr.on('data', (data) => { diagnostics += data.toString().slice(0, 4096 - diagnostics.length); });
   await new Promise((resolve, reject) => {
     let output = '';
-    const timer = setTimeout(() => reject(new Error(`测试父进程未就绪：${diagnostics}`)), 10000);
+    const startupMs = process.env.NXCONTAINER_TEST_SLOW === '1' ? 60_000 : 10_000;
+    const timer = setTimeout(() => reject(new Error(`测试父进程未就绪：${diagnostics}`)), startupMs);
     parent.once('error', (error) => { clearTimeout(timer); reject(error); });
     parent.once('close', () => { clearTimeout(timer); reject(new Error(`测试父进程提前退出：${diagnostics}`)); });
     parent.stdout.on('data', (data) => {

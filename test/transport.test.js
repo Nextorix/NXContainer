@@ -17,7 +17,9 @@ import { fileURLToPath } from 'node:url';
 import { invoke } from '../src/transport.js';
 
 const args = [fileURLToPath(new URL('./fixtures/runtime.mjs', import.meta.url))];
-const call = (operation, options) => invoke(process.execPath, { operation }, { args, timeoutMs: 5000, ...options });
+// TCG 下 Node 子进程冷启动可能超过 5 秒；显式超时用例仍按原值运行。
+const fixtureTimeoutMs = process.env.NXCONTAINER_TEST_SLOW === '1' ? 45_000 : 5_000;
+const call = (operation, options) => invoke(process.execPath, { operation }, { args, timeoutMs: fixtureTimeoutMs, ...options });
 
 test('流式字节不会破坏 UTF-8，子命令非零退出不是执行器崩溃', async () => {
   const chunks = [];

@@ -31,7 +31,8 @@ jobs:
           node-version: '24'
       - uses: actions/setup-go@v5
         with:
-          go-version-file: native/go.mod
+          # go.mod 记录兼容下限；分发产物使用当前受支持的稳定工具链。
+          go-version: stable
           cache-dependency-path: native/go.sum
       - name: 准备隔离后端
         run: |
@@ -49,3 +50,11 @@ jobs:
         run: npm test
       - name: 仓库外打包和离线安装验收
         run: npm run test:package
+      - name: 扫描四个实际分发的执行器
+        if: matrix.runner == 'ubuntu-24.04'
+        run: |
+          GOBIN="$RUNNER_TEMP" go install golang.org/x/vuln/cmd/govulncheck@v1.10.0
+          "$RUNNER_TEMP/govulncheck" -version
+          for target in win32-x64.exe win32-arm64.exe linux-x64 linux-arm64; do
+            "$RUNNER_TEMP/govulncheck" -mode=binary "bin/nxcontainer-$target"
+          done

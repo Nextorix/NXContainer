@@ -27,6 +27,14 @@ Windows 11 amd64，Go 1.27.4，Node.js 24.21.0。使用当前开发账户和临�
 - 回归用例先复现了输出错误：`onOutput` 回调改写收到的字节，会连带改变最终返回的 stdout/stderr。现在回调接收独立副本，回归测试通过。仓库外消费端另测了恰好 1 MiB 二进制文件的写入及只读共享读取，以及多 1 字节时拒写。
 - Linux：`.github/workflows/linux.yml` 在 Ubuntu 24.04 x64 和 arm64 runner 上分别构建并以普通用户强制执行集成和离线安装测试。缺少执行器或隔离后端时不得以跳过或仅验证导入报告成功。工作流已通过 `actionlint`，Linux 两架构的 Go 测试已交叉编译；本轮因推送未获 GitHub 认证，没有远端运行编号，**Linux 仍待验证**。
 
+### Go 依赖漏洞修复与静默复验
+
+`govulncheck v1.10.0` 使用 Go 官方漏洞库（更新时间 2026-11-11 02:51 UTC）。修复前，Windows x64 和 arm64 执行器均命中 [GO-2026-5024](https://pkg.go.dev/vuln/GO-2026-5024)，命中符号为 `windows.NewNTUnicodeString`；Linux 两个产物未命中。已将 `golang.org/x/sys` 从 v0.41.0 升至修复版本 v0.44.0。
+
+- Windows x64 本机后台、无交互复验：`npm run build:all`、`go mod verify`、不使用测试结果缓存的 `go test -count=1 ./...`、`go vet ./...`、强制执行器的 `npm test`（31 通过、0 失败，仅跳过 Linux 专项）、`npm run test:package` 及临时工作区示例均通过。
+- 对重建的四个 `bin/nxcontainer-*` 逐一执行 `govulncheck -mode=binary`，并在 Windows 的 `native/` 下执行 `govulncheck ./...`，均未报告已知漏洞。Linux 工作流已配置构建后扫描四个产物，命中则失败；工作流本身通过 `actionlint`，不等于远端作业已执行。
+- 此扫描覆盖 Go 漏洞库中已知的问题，不覆盖自有隔离逻辑、宿主内核或 bubblewrap 的全部风险，不作为“无高危漏洞”的证明。Linux 仍需提供对应提交的实际 Actions 运行结果。
+
 ## 初始化提交记录的验证
 
 - `npm test`：31 项，30 项通过，1 项 Linux 集成测试标记待验证并跳过。

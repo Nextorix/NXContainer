@@ -7,7 +7,7 @@
  * MoyuZJ <moyuzj@nextorix.dev> @Nextorix
  * Made in China with ♥
  *
- * Copyright (C) 2026 Nextorix LLC.
+ * Copyright (C) 2026 Nextorix
  * SPDX-License-Identifier: GPL-3.0-or-later
  -->
 
@@ -37,7 +37,7 @@ NXContainer 是可独立构建、打包、安装和导入的沙箱依赖库，�
 - [x] Windows 稳定句柄授权、旧 DACL 恢复与新对象临时 SID 清理。
 - [x] Windows CPU、提交内存、进程数限制及当前开发机上的隔离测试。
 - [x] Windows 私有 Window Station/Desktop 安全边界，保留在库内部。
-- [x] Linux bubblewrap、namespace、seccomp 后端代码与目标产物；**运行状态待验证**。
+- [x] Linux bubblewrap、namespace、seccomp 后端代码与目标产物；**已通过 Alpine 3.24 双架构虚拟机限定配置验收，其他环境待验证**。
 - [x] 本机及四目标构建入口；无自动下载或 npm 安装脚本。
 - [x] 包内自带 Linux 执行器的执行位准备，失败时明确报错，不修改自定义执行器。
 - [x] 独立消费应用的真实打包、离线安装、公开包名导入验收流程。
@@ -48,9 +48,9 @@ NXContainer 是可独立构建、打包、安装和导入的沙箱依赖库，�
 |---|---|
 | Windows x64 | 已做部分实机验证，仍为实验版本，未完成独立安全审计 |
 | Windows arm64 | 待验证，仅交叉编译 |
-| Linux x64 / arm64 | 待验证，不用交叉编译、自检成功或模拟测试代替实机验收 |
+| Linux x64 / arm64 | Alpine 双架构虚拟机限定配置已验收；不向其他发行版或全面安全验证外推 |
 
-Linux 待验证不作为本轮依赖库封装的阻塞项，`validation: 'pending'` 和显式实验选项会持续保留。后续有原生 Linux 测试环境时，再运行强制集成测试、工具兼容性和对抗性测试。
+`validation: 'pending'` 和显式实验选项仍保留，表示总体平台验证不足，而不是否认已经记录的 Alpine 运行结果。后续继续补充其他 Linux 发行版、工具兼容性、资源配额和对抗性测试。
 
 ## 后续库级加固
 

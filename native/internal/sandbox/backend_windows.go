@@ -9,7 +9,7 @@
  * MoyuZJ <moyuzj@nextorix.dev> @Nextorix
  * Made in China with ♥
  *
- * Copyright (C) 2026 Nextorix LLC.
+ * Copyright (C) 2026 Nextorix
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
@@ -168,7 +168,7 @@ func windowsExecutable(c Config, argv []string, cwd string, env map[string]strin
 			return true
 		}
 		for _, mount := range c.Mounts {
-			if contained(mount.Source, candidate) {
+			if contained(mount.Source, candidate) || (mount.Alias != "" && contained(mount.Alias, candidate)) {
 				return true
 			}
 		}
@@ -261,6 +261,13 @@ func runPlatform(ctx context.Context, c Config, command Command, stdout, stderr 
 			return -1, err
 		}
 		grants = append(grants, grant)
+		if mount.Alias != "" {
+			aliasGrant, err := grantWindowsAlias(mount.Alias, profile.sid)
+			if err != nil {
+				return -1, err
+			}
+			grants = append(grants, aliasGrant)
+		}
 	}
 	cwd, err := resolveCwd(c, command.Cwd)
 	if err != nil {

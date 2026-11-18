@@ -7,7 +7,7 @@
  * MoyuZJ <moyuzj@nextorix.dev> @Nextorix
  * Made in China with ♥
  *
- * Copyright (C) 2026 Nextorix LLC.
+ * Copyright (C) 2026 Nextorix
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
@@ -61,11 +61,11 @@ test('本机执行器报告真实能力；不支持的平台不能触发宿主�
   }
 });
 
-test('Linux 待验证：原生隔离、只读共享、文件接口、取消与输出限制', async (t) => {
+test('Linux 原生隔离：只读共享、文件接口、取消与输出限制', async (t) => {
   const { root, nx } = await setup(t);
   if (process.platform !== 'linux') {
     if (process.env.NXCONTAINER_REQUIRE_LINUX === '1') assert.fail('Linux 验收必须在真实 Linux 测试机运行');
-    return t.skip('待验证：需要真实 Linux 内核与 bubblewrap');
+    return t.skip('当前平台非 Linux；此项需要 Linux 内核与 bubblewrap');
   }
   const capabilities = await capability(t, nx);
   if (!capabilities) return;

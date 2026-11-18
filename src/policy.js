@@ -7,7 +7,7 @@
  * MoyuZJ <moyuzj@nextorix.dev> @Nextorix
  * Made in China with ♥
  *
- * Copyright (C) 2026 Nextorix LLC.
+ * Copyright (C) 2026 Nextorix
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
@@ -76,17 +76,29 @@ export async function normalizePolicy(input, allowedRoots, experimental) {
   const names = new Set();
   const mounts = [];
   for (const mount of input.mounts) {
-    object(mount, ['source', 'name', 'access'], '挂载');
+    object(mount, ['source', 'name', 'access', 'alias'], '挂载');
     if (typeof mount.name !== 'string' || !ID.test(mount.name) || names.has(mount.name.toLowerCase())) fail('INVALID_CONFIG', '挂载名不合法或重复');
     names.add(mount.name.toLowerCase());
     if (!['read-only', 'read-write'].includes(mount.access)) fail('INVALID_CONFIG', '挂载权限必须是 read-only 或 read-write');
     const source = await directory(mount.source);
     if (!allowedRoots.some((root) => within(root, source))) fail('PERMISSION_DENIED', '挂载源不在管理方授权的目录范围内');
     if (mounts.some((other) => overlap(other.source, source))) fail('MOUNT_CONFLICT', '同一沙箱不能挂载重叠或重复的源目录');
-    mounts.push(Object.freeze({ source, name: mount.name, access: mount.access }));
+    let alias;
+    if (mount.alias !== undefined) {
+      if (process.platform !== 'win32' || typeof mount.alias !== 'string' || !path.isAbsolute(mount.alias) || mount.alias.includes('\0')) fail('INVALID_CONFIG', 'alias 只支持 Windows 上由可信宿主创建的绝对目录联接');
+      alias = path.resolve(mount.alias);
+      const parent = await directory(path.dirname(alias));
+      if (!allowedRoots.some((root) => within(root, parent))) fail('PERMISSION_DENIED', '联接父目录不在管理方授权范围内');
+      if (!(await lstat(alias)).isSymbolicLink() || (await realpath(alias)).toLowerCase() !== source.toLowerCase()) fail('UNSAFE_PATH', 'alias 必须是直接指向当前挂载源的目录联接');
+      if (overlap(parent, source)) fail('MOUNT_CONFLICT', '联接父目录与挂载源不能重叠');
+    }
+    mounts.push(Object.freeze({ source, name: mount.name, access: mount.access, ...(alias ? { alias } : {}) }));
   }
-  if (!mounts.some((m) => m.name === 'workspace' && m.access === 'read-write')) {
-    fail('INVALID_CONFIG', '必须提供名为 workspace 的读写工作区');
+  for (const mount of mounts) {
+    if (mount.alias && mounts.some((other) => overlap(path.dirname(mount.alias), other.source))) fail('MOUNT_CONFLICT', '显示联接的父目录不能位于任何挂载源内');
+  }
+  if (!mounts.some((m) => m.name === 'workspace')) {
+    fail('INVALID_CONFIG', '必须提供名为 workspace 的工作区（可读写或只读）');
   }
   return Object.freeze({
     agentId: input.agentId,
@@ -107,7 +119,8 @@ export async function normalizePolicy(input, allowedRoots, experimental) {
 export function assertSharing(policy, existing) {
   for (const other of existing) {
     if (other.agentId.toLowerCase() === policy.agentId.toLowerCase()) fail('AGENT_EXISTS', '该 Agent 已有沙箱');
-    for (const a of policy.mounts) for (const b of other.mounts) {
+    const grants = (p) => p.mounts.flatMap((m) => [m, ...(m.alias ? [{ source: path.dirname(m.alias), access: 'read-only' }] : [])]);
+    for (const a of grants(policy)) for (const b of grants(other)) {
       if (!overlap(a.source, b.source)) continue;
       if (a.access === 'read-write' && b.access === 'read-write') {
         fail('MOUNT_CONFLICT', '不同 Agent 不能拥有重叠的可写目录');

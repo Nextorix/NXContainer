@@ -9,7 +9,7 @@
  * MoyuZJ <moyuzj@nextorix.dev> @Nextorix
  * Made in China with ♥
  *
- * Copyright (C) 2026 Nextorix LLC.
+ * Copyright (C) 2026 Nextorix
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
@@ -56,11 +56,11 @@ type windowsProfile struct {
 	capabilities []windows.SIDAndAttributes
 }
 
-func windowsRegistryReadCapability() ([]windows.SIDAndAttributes, error) {
+func windowsCapability(capability string) ([]windows.SIDAndAttributes, error) {
 	if err := winDeriveCapabilities.Find(); err != nil {
 		return nil, err
 	}
-	name, _ := windows.UTF16PtrFromString("registryRead")
+	name, _ := windows.UTF16PtrFromString(capability)
 	var groups, capabilities **windows.SID
 	var groupCount, capabilityCount uint32
 	ok, _, callErr := winDeriveCapabilities.Call(uintptr(unsafe.Pointer(name)), uintptr(unsafe.Pointer(&groups)), uintptr(unsafe.Pointer(&groupCount)), uintptr(unsafe.Pointer(&capabilities)), uintptr(unsafe.Pointer(&capabilityCount)))
@@ -79,7 +79,7 @@ func windowsRegistryReadCapability() ([]windows.SIDAndAttributes, error) {
 		}
 	}()
 	if capabilityCount != 1 {
-		return nil, fmt.Errorf("registryRead 能力 SID 数量异常")
+		return nil, fmt.Errorf("%s 能力 SID 数量异常", capability)
 	}
 	sid, err := (*capabilities).Copy()
 	if err != nil {
@@ -100,9 +100,13 @@ func newWindowsProfile() (*windowsProfile, error) {
 	if err := winCreateProfile.Find(); err != nil {
 		return nil, err
 	}
-	capabilities, err := windowsRegistryReadCapability()
-	if err != nil {
-		return nil, err
+	var capabilities []windows.SIDAndAttributes
+	for _, name := range []string{"registryRead", "lpacInstrumentation"} {
+		grant, err := windowsCapability(name)
+		if err != nil {
+			return nil, err
+		}
+		capabilities = append(capabilities, grant...)
 	}
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
@@ -412,11 +416,12 @@ func runWindowsProcess(ctx context.Context, profile *windowsProfile, desktop *wi
 		return -1, err
 	}
 	defer attributes.Delete()
-	// registryRead 仅用于初始化 Win32 运行库（包括 Winsock 目录）；不授予任何网络能力。
-	if len(profile.capabilities) != 1 {
-		return -1, fmt.Errorf("Windows 进程必须恰有一个 registryRead 能力")
+	// registryRead 用于 Win32 初始化；lpacInstrumentation 用于 PowerShell 的 ETW 注册。
+	// 两者都是固定的系统能力，不开放网络，不修改全局设备或 ETW 提供者的 ACL。
+	if len(profile.capabilities) != 2 {
+		return -1, fmt.Errorf("Windows 进程必须恰有 registryRead 和 lpacInstrumentation 两个能力")
 	}
-	capabilities := windowsSecurityCapabilities{AppContainerSID: profile.sid, Capabilities: &profile.capabilities[0], CapabilityCount: 1}
+	capabilities := windowsSecurityCapabilities{AppContainerSID: profile.sid, Capabilities: &profile.capabilities[0], CapabilityCount: 2}
 	policy := uint32(1)
 	for _, attribute := range []struct {
 		key   uintptr

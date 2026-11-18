@@ -7,7 +7,7 @@
  * MoyuZJ <moyuzj@nextorix.dev> @Nextorix
  * Made in China with ♥
  *
- * Copyright (C) 2026 Nextorix LLC.
+ * Copyright (C) 2026 Nextorix
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
@@ -43,6 +43,7 @@ type Mount struct {
 	Name   string `json:"name"`
 	Source string `json:"source"`
 	Access string `json:"access"`
+	Alias  string `json:"alias,omitempty"`
 }
 
 type Limits struct {
@@ -181,7 +182,7 @@ func ValidateConfig(c Config) error {
 		if m.Access != "read-only" && m.Access != "read-write" {
 			return problem("INVALID_CONFIG", "挂载权限不合法")
 		}
-		if m.Name == "workspace" && m.Access == "read-write" {
+		if m.Name == "workspace" {
 			workspace = true
 		}
 		if filepath.Clean(m.Source) != m.Source {
@@ -190,14 +191,45 @@ func ValidateConfig(c Config) error {
 		if err := validateDirectory(m.Source); err != nil {
 			return err
 		}
+		if m.Alias != "" {
+			if runtime.GOOS != "windows" || !filepath.IsAbs(m.Alias) || filepath.Clean(m.Alias) != m.Alias {
+				return problem("INVALID_CONFIG", "显示联接只支持 Windows 绝对规范路径")
+			}
+			parent := filepath.Dir(m.Alias)
+			if err := validateDirectory(parent); err != nil {
+				return err
+			}
+			if contained(parent, m.Source) || contained(m.Source, parent) {
+				return problem("MOUNT_CONFLICT", "联接父目录与挂载源不能重叠")
+			}
+			_, err := os.Readlink(m.Alias)
+			if err != nil {
+				return problem("UNSAFE_PATH", "显示路径必须是由可信宿主创建的目录联接")
+			}
+			target, err := os.Stat(m.Alias)
+			sourceInfo, sourceErr := os.Stat(m.Source)
+			if err != nil || sourceErr != nil || !os.SameFile(target, sourceInfo) {
+				return problem("UNSAFE_PATH", "显示联接必须指向当前挂载源")
+			}
+		}
 		for _, previous := range c.Mounts[:i] {
 			if contained(previous.Source, m.Source) || contained(m.Source, previous.Source) {
 				return problem("MOUNT_CONFLICT", "挂载源不能重叠")
 			}
 		}
 	}
+	for _, m := range c.Mounts {
+		if m.Alias == "" {
+			continue
+		}
+		for _, other := range c.Mounts {
+			if contained(filepath.Dir(m.Alias), other.Source) || contained(other.Source, filepath.Dir(m.Alias)) {
+				return problem("MOUNT_CONFLICT", "显示联接父目录不能位于挂载源内")
+			}
+		}
+	}
 	if !workspace {
-		return problem("INVALID_CONFIG", "缺少可写 workspace 挂载")
+		return problem("INVALID_CONFIG", "缺少 workspace 挂载（可读写或只读）")
 	}
 	return nil
 }
@@ -218,6 +250,9 @@ func mountPath(c Config, name string) string {
 	if runtime.GOOS == "windows" {
 		for _, mount := range c.Mounts {
 			if mount.Name == name {
+				if mount.Alias != "" {
+					return mount.Alias
+				}
 				return mount.Source
 			}
 		}

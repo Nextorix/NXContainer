@@ -7,7 +7,7 @@
  * MoyuZJ <moyuzj@nextorix.dev> @Nextorix
  * Made in China with ♥
  *
- * Copyright (C) 2026 Nextorix LLC.
+ * Copyright (C) 2026 Nextorix
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
@@ -49,11 +49,20 @@ test('拒绝未知能力、重复挂载、越界目录及无效身份', async (t
     { ...config('a', a), desktop: true },
     { ...config('a', a), privileged: true },
     { ...config('a', a), limits: { memoryMb: 1024 } },
-    { ...config('a', a), mounts: [{ name: 'workspace', source: a, access: 'read-only' }] },
+    { ...config('a', a), mounts: [{ name: 'reference', source: a, access: 'read-only' }] },
     { ...config('a', a), mounts: [{ name: 'workspace', source: a, access: 'read-write' }, { name: 'alias', source: a, access: 'read-only' }] },
   ]) await assert.rejects(normalizePolicy(invalid, [root], true));
   await assert.rejects(normalizePolicy(config('a', b), [a], true), { code: 'PERMISSION_DENIED' });
   await assert.rejects(directory(path.parse(a).root), { code: 'INVALID_CONFIG' });
+});
+
+test('工作区允许只读，策略不会隐式提升权限', async (t) => {
+  const { root, a } = await fixture(t);
+  const input = config('reader', a);
+  input.mounts[0].access = 'read-only';
+  const policy = await normalizePolicy(input, [root], true);
+  assert.equal(policy.mounts[0].access, 'read-only');
+  assert.ok(Object.isFrozen(policy.mounts[0]));
 });
 
 test('进程配额验证范围并保持不可变', async (t) => {

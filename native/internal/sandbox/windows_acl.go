@@ -9,7 +9,7 @@
  * MoyuZJ <moyuzj@nextorix.dev> @Nextorix
  * Made in China with ♥
  *
- * Copyright (C) 2026 Nextorix LLC.
+ * Copyright (C) 2026 Nextorix
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"unsafe"
@@ -270,6 +271,11 @@ func lockWindowsSources(ctx context.Context, mounts []Mount) (func(), error) {
 	keys := make([]string, 0, len(mounts))
 	for _, mount := range mounts {
 		keys = append(keys, strings.ToLower(mount.Source))
+		if mount.Alias != "" {
+			for parent := filepath.Dir(mount.Alias); parent != filepath.Dir(parent); parent = filepath.Dir(parent) {
+				keys = append(keys, strings.ToLower(parent))
+			}
+		}
 	}
 	sort.Strings(keys)
 	var held []windows.Handle

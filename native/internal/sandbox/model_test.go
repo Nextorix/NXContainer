@@ -7,7 +7,7 @@
  * MoyuZJ <moyuzj@nextorix.dev> @Nextorix
  * Made in China with ♥
  *
- * Copyright (C) 2026 Nextorix LLC.
+ * Copyright (C) 2026 Nextorix
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
@@ -97,6 +97,24 @@ func TestCommand(t *testing.T) {
 	command.TimeoutMs++
 	if ValidateCommand(c, command) == nil {
 		t.Fatal("不能提升超时")
+	}
+}
+
+func TestReadOnlyWorkspace(t *testing.T) {
+	c := testConfig(t)
+	c.Mounts[0].Access = "read-only"
+	if err := ValidateConfig(c); err != nil {
+		t.Fatal(err)
+	}
+	for _, operation := range []string{"write", "remove", "mkdir"} {
+		if _, err := prepareFile(c, FileRequest{Operation: operation, Mount: "workspace", Path: "a"}); err == nil {
+			t.Fatalf("只读工作区接受了 %s", operation)
+		}
+	}
+	for _, operation := range []string{"read", "list"} {
+		if _, err := prepareFile(c, FileRequest{Operation: operation, Mount: "workspace", Path: "a"}); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

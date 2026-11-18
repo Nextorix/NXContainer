@@ -7,7 +7,7 @@
  * MoyuZJ <moyuzj@nextorix.dev> @Nextorix
  * Made in China with ♥
  *
- * Copyright (C) 2026 Nextorix LLC.
+ * Copyright (C) 2026 Nextorix
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
@@ -22,9 +22,11 @@ export const protocolVersion: 1;
 export interface Mount {
   /** 由可信主程序指定的绝对宿主目录，不能来自模型参数。 */
   source: string;
-  /** 逻辑挂载名；workspace 必须存在且可写。 */
+  /** 逻辑挂载名；workspace 必须存在，可以只读（例如计划模式）。 */
   name: string;
   access: 'read-only' | 'read-write';
+  /** Windows 可选显示联接。必须由可信宿主创建、指向 source，父目录也须在 allowedRoots 内；不授予父目录写权限。 */
+  alias?: string;
 }
 export interface SandboxConfig {
   agentId: string;

@@ -45,6 +45,7 @@ jobs:
           npm run test:native
           npm run check:native
       - name: 构建分发包所需执行器
+        id: build
         run: npm run build:all
       - name: 强制执行 Linux 集成测试
         run: npm test
@@ -56,10 +57,12 @@ jobs:
           sysctl kernel.apparmor_restrict_unprivileged_userns user.max_user_namespaces || true
           sudo aa-status --json | python3 -c 'import sys,json; p=json.load(sys.stdin)["profiles"]; print({k:v for k,v in p.items() if "bwrap" in k or "userns" in k})' || true
           sudo journalctl -k -b --since '-10 min' --grep='apparmor="DENIED".*comm="bwrap"' --no-pager -n 20
+      # 构建成功即可检查产物；独立记录结果，不覆盖之前步骤的失败状态。
       - name: 仓库外打包和离线安装验收
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: npm run test:package
       - name: 扫描四个实际分发的执行器
-        if: matrix.runner == 'ubuntu-24.04'
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.runner == 'ubuntu-24.04' }}
         run: |
           GOBIN="$RUNNER_TEMP" go install golang.org/x/vuln/cmd/govulncheck@v1.10.0
           "$RUNNER_TEMP/govulncheck" -version

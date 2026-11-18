@@ -25,7 +25,7 @@ Windows 11 amd64，Go 1.27.4，Node.js 24.21.0。使用当前开发账户和临�
 
 - Windows x64：在临时目录独立克隆 `a18609c`，确认没有 `bin/` 后执行 `npm run build:all`。以 `NXCONTAINER_REQUIRE_RUNTIME=1` 运行 `npm test`：32 项中 31 项通过、0 项失败，唯一跳过的是 Linux 专项。`go test -count=1 ./...`、`go vet ./...`（在 `native/` 中）、`npm run test:package` 和临时工作区示例均通过。
 - 回归用例先复现了输出错误：`onOutput` 回调改写收到的字节，会连带改变最终返回的 stdout/stderr。现在回调接收独立副本，回归测试通过。仓库外消费端另测了恰好 1 MiB 二进制文件的写入及只读共享读取，以及多 1 字节时拒写。
-- Linux：`.github/workflows/linux.yml` 在 Ubuntu 24.04 x64 和 arm64 runner 上分别构建并以普通用户强制执行集成和离线安装测试。缺少执行器或隔离后端时不得以跳过或仅验证导入报告成功。工作流已通过 `actionlint`，Linux 两架构的 Go 测试已交叉编译；本轮因推送未获 GitHub 认证，没有远端运行编号，**Linux 仍待验证**。
+- Linux：`.github/workflows/linux.yml` 在 Ubuntu 24.04 x64 和 arm64 runner 上分别构建并以普通用户强制执行集成和离线安装测试。缺少执行器或隔离后端时不得以跳过或仅验证导入报告成功。工作流通过 `actionlint` 后，在两个架构的 Actions runner 上实际运行了 Go 测试、静态检查和构建。[首次运行](https://github.com/Nextorix/NXContainer/actions/runs/44229152046)与[诊断运行](https://github.com/Nextorix/NXContainer/actions/runs/44229832854)均未通过隔离集成测试。诊断运行 `6fc7bf1` 的两份内核日志都显示 AppArmor 的 `unprivileged_userns` 策略拒绝了 bubblewrap 初始化隔离网络所需的权限，自检报 `Failed RTM_NEWADDR: Operation not permitted`。该次运行未执行随后安排的安装包验收和漏洞扫描。**当前托管环境不满足后端前提，Linux 功能验收未通过**。不得将执行器在不兼容宿主上按预期拒绝启动计作隔离功能通过。
 
 ### Go 依赖漏洞修复与静默复验
 
@@ -40,7 +40,7 @@ Windows 11 amd64，Go 1.27.4，Node.js 24.21.0。使用当前开发账户和临�
 除依赖库扫描外，另用 `gosec v2.30.0` 在 `native/` 下运行 `gosec -severity=high ./...`。初扫 Windows amd64 有 6 条 G115 整数转换告警，Linux amd64 有 1 条。这是静态分析告警，不代表发现 7 个可利用漏洞。
 
 - Windows 使用固定 32 位 HRESULT 的失败位，ACL 清理从 `acl.AceCount` 倒序遍历，不再按偏移读长度。进程能力列表在传给系统 API 前显式检查恰有一个条目。
-- Linux 按低 32 位识别受保护文件系统的魔数，不依赖高位的符号扩展。增加了普通文件系统、受保护类型及两种扩展形式的单元测试；在 Windows 只交叉编译了该 Linux 测试，实跑留给 Actions。
+- Linux 按低 32 位识别受保护文件系统的魔数，不依赖高位的符号扩展。增加了普通文件系统、受保护类型及两种扩展形式的单元测试；Windows 本机只交叉编译该 Linux 测试；上述两架构 Actions 的 `go test ./...` 已实际通过。
 - 改后用 `CGO_ENABLED=0`、分别设置 `GOOS=windows/linux` 和 `GOARCH=amd64/arm64`，四种目标配置复扫均为 0 条高严重性告警、0 条包加载错误，无 `#nosec` 排除。四个重建产物的 `govulncheck -mode=binary` 均未命中已知漏洞。上述结果限于相应扫描规则及 Go 代码范围，并非独立安全审计。
 - 改后 Windows x64 后台无交互复测，`go test -count=1 ./...`、`go vet ./...`、`npm test`（31 通过、0 失败、仅 Linux 专项跳过）、打包验收及示例均通过。
 

@@ -19,7 +19,15 @@
 
 Windows 11 amd64，Go 1.27.4，Node.js 24.21.0。使用当前开发账户和临时目录，没有使用 LMC 的真实 `data/`，没有创建系统用户、安装虚拟机或修改系统范围的设备权限。
 
-## 已执行
+## Windows 独立复测与 Linux CI（2026-11-18）
+
+复测前，Git 历史仅有初始化提交 `b0a3943`：已包含 JS SDK、Go 执行器、两套平台后端和包验收，但没有 GitHub Actions 工作流。以下是新增验证，不把历史记录当作本轮结果。
+
+- Windows x64：在临时目录独立克隆 `a18609c`，确认没有 `bin/` 后执行 `npm run build:all`。以 `NXCONTAINER_REQUIRE_RUNTIME=1` 运行 `npm test`：32 项中 31 项通过、0 项失败，唯一跳过的是 Linux 专项。`go test -count=1 ./...`、`go vet ./...`（在 `native/` 中）、`npm run test:package` 和临时工作区示例均通过。
+- 回归用例先复现了输出错误：`onOutput` 回调改写收到的字节，会连带改变最终返回的 stdout/stderr。现在回调接收独立副本，回归测试通过。仓库外消费端另测了恰好 1 MiB 二进制文件的写入及只读共享读取，以及多 1 字节时拒写。
+- Linux：`.github/workflows/linux.yml` 在 Ubuntu 24.04 x64 和 arm64 runner 上分别构建并以普通用户强制执行集成和离线安装测试。缺少执行器或隔离后端时不得以跳过或仅验证导入报告成功。工作流已通过 `actionlint`，Linux 两架构的 Go 测试已交叉编译；本轮因推送未获 GitHub 认证，没有远端运行编号，**Linux 仍待验证**。
+
+## 初始化提交记录的验证
 
 - `npm test`：31 项，30 项通过，1 项 Linux 集成测试标记待验证并跳过。
 - `npm run test:native`：通过；Windows 边界辅助用例会在受控 LPAC 子进程中执行，正常宿主测试入口会跳过该辅助入口。

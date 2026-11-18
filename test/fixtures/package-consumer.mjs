@@ -30,7 +30,7 @@ try {
   assert.equal(capabilities.desktop, false);
   const config = { agentId: 'external-a', mounts: [{ name: 'workspace', source: path.join(root, 'a'), access: 'read-write' }] };
   if (!capabilities.exec) {
-    assert.notEqual(process.platform, 'win32', capabilities.reason);
+    assert.ok(process.platform !== 'win32' && process.env.NXCONTAINER_REQUIRE_LINUX !== '1', capabilities.reason);
     await assert.rejects(nx.createSandbox(config), { code: 'BACKEND_UNAVAILABLE' });
     console.log('包导入及不可用报告通过，未执行隔离任务：', capabilities.reason);
   } else {

@@ -100,12 +100,12 @@ func removeWindowsGrant(handle windows.Handle, sid *windows.SID) error {
 	if err != nil || acl == nil {
 		return err
 	}
-	// ACL 头部的 AceCount 位于偏移 4；仅删除本执行器添加的普通允许 ACE，其他内容原样保留。
-	count := *(*uint16)(unsafe.Add(unsafe.Pointer(acl), 4))
+	// 删除后 ACE 会前移；从尾部倒序，只处理本次租约的允许 ACE。
 	changed := false
-	for index := int(count) - 1; index >= 0; index-- {
+	for remaining := uint32(acl.AceCount); remaining > 0; remaining-- {
+		index := remaining - 1
 		var ace *windows.ACCESS_ALLOWED_ACE
-		if err := windows.GetAce(acl, uint32(index), &ace); err != nil {
+		if err := windows.GetAce(acl, index, &ace); err != nil {
 			return err
 		}
 		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE || !windows.EqualSid((*windows.SID)(unsafe.Pointer(&ace.SidStart)), sid) {

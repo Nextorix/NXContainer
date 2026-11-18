@@ -88,6 +88,14 @@ func windowsRegistryReadCapability() ([]windows.SIDAndAttributes, error) {
 	return []windows.SIDAndAttributes{{Sid: sid, Attributes: windows.SE_GROUP_ENABLED}}, nil
 }
 
+// Win32 的 HRESULT 固定为 32 位，Proc.Call 则以指针宽度返回寄存器值。
+func profileStatusError(operation string, status uintptr) error {
+	if status&0x80000000 != 0 {
+		return fmt.Errorf("%s失败：HRESULT 0x%08x", operation, status&0xffffffff)
+	}
+	return nil
+}
+
 func newWindowsProfile() (*windowsProfile, error) {
 	if err := winCreateProfile.Find(); err != nil {
 		return nil, err
@@ -104,8 +112,8 @@ func newWindowsProfile() (*windowsProfile, error) {
 	value, _ := windows.UTF16PtrFromString(name)
 	var sid *windows.SID
 	status, _, _ := winCreateProfile.Call(uintptr(unsafe.Pointer(value)), uintptr(unsafe.Pointer(value)), uintptr(unsafe.Pointer(value)), 0, 0, uintptr(unsafe.Pointer(&sid)))
-	if int32(status) < 0 {
-		return nil, fmt.Errorf("创建 AppContainer 身份失败：HRESULT 0x%08x", uint32(status))
+	if err := profileStatusError("创建 AppContainer 身份", status); err != nil {
+		return nil, err
 	}
 	return &windowsProfile{name: name, sid: sid, capabilities: capabilities}, nil
 }
@@ -118,10 +126,7 @@ func (p *windowsProfile) close() error {
 	status, _, _ := winDeleteProfile.Call(uintptr(unsafe.Pointer(name)))
 	winFreeSID.Call(uintptr(unsafe.Pointer(p.sid)))
 	p.sid = nil
-	if int32(status) < 0 {
-		return fmt.Errorf("删除 AppContainer 身份失败：HRESULT 0x%08x", uint32(status))
-	}
-	return nil
+	return profileStatusError("删除 AppContainer 身份", status)
 }
 
 type windowsDesktop struct {
@@ -408,7 +413,10 @@ func runWindowsProcess(ctx context.Context, profile *windowsProfile, desktop *wi
 	}
 	defer attributes.Delete()
 	// registryRead 仅用于初始化 Win32 运行库（包括 Winsock 目录）；不授予任何网络能力。
-	capabilities := windowsSecurityCapabilities{AppContainerSID: profile.sid, Capabilities: &profile.capabilities[0], CapabilityCount: uint32(len(profile.capabilities))}
+	if len(profile.capabilities) != 1 {
+		return -1, fmt.Errorf("Windows 进程必须恰有一个 registryRead 能力")
+	}
+	capabilities := windowsSecurityCapabilities{AppContainerSID: profile.sid, Capabilities: &profile.capabilities[0], CapabilityCount: 1}
 	policy := uint32(1)
 	for _, attribute := range []struct {
 		key   uintptr

@@ -35,6 +35,15 @@ Windows 11 amd64，Go 1.27.4，Node.js 24.21.0。使用当前开发账户和临�
 - 对重建的四个 `bin/nxcontainer-*` 逐一执行 `govulncheck -mode=binary`，并在 Windows 的 `native/` 下执行 `govulncheck ./...`，均未报告已知漏洞。Linux 工作流已配置构建后扫描四个产物，命中则失败；工作流本身通过 `actionlint`，不等于远端作业已执行。
 - 此扫描覆盖 Go 漏洞库中已知的问题，不覆盖自有隔离逻辑、宿主内核或 bubblewrap 的全部风险，不作为“无高危漏洞”的证明。Linux 仍需提供对应提交的实际 Actions 运行结果。
 
+### 原生源码静态检查
+
+除依赖库扫描外，另用 `gosec v2.30.0` 在 `native/` 下运行 `gosec -severity=high ./...`。初扫 Windows amd64 有 6 条 G115 整数转换告警，Linux amd64 有 1 条。这是静态分析告警，不代表发现 7 个可利用漏洞。
+
+- Windows 使用固定 32 位 HRESULT 的失败位，ACL 清理从 `acl.AceCount` 倒序遍历，不再按偏移读长度。进程能力列表在传给系统 API 前显式检查恰有一个条目。
+- Linux 按低 32 位识别受保护文件系统的魔数，不依赖高位的符号扩展。增加了普通文件系统、受保护类型及两种扩展形式的单元测试；在 Windows 只交叉编译了该 Linux 测试，实跑留给 Actions。
+- 改后用 `CGO_ENABLED=0`、分别设置 `GOOS=windows/linux` 和 `GOARCH=amd64/arm64`，四种目标配置复扫均为 0 条高严重性告警、0 条包加载错误，无 `#nosec` 排除。四个重建产物的 `govulncheck -mode=binary` 均未命中已知漏洞。上述结果限于相应扫描规则及 Go 代码范围，并非独立安全审计。
+- 改后 Windows x64 后台无交互复测，`go test -count=1 ./...`、`go vet ./...`、`npm test`（31 通过、0 失败、仅 Linux 专项跳过）、打包验收及示例均通过。
+
 ## 初始化提交记录的验证
 
 - `npm test`：31 项，30 项通过，1 项 Linux 集成测试标记待验证并跳过。

@@ -121,6 +121,15 @@ func systemArguments() ([]string, error) {
 	return args, nil
 }
 
+func protectedLinuxFilesystem(fsType int64) bool {
+	// 文件系统魔数按低 32 位比较，不依赖内核如何扩展最高位。
+	switch fsType & 0xffffffff {
+	case 0x9fa0, 0x62656572, 0x27e0eb, 0x63677270, 0x1cd1, 0x19800202, 0x64626720, 0x74726163, 0xcafe4a11, 0x73636673:
+		return true
+	}
+	return false
+}
+
 // 防止通过授权接口把宿主 /proc 等魔术文件系统重新带进隔离视图。
 func validateMountSources(c Config, worker string) error {
 	mountInfo, err := os.ReadFile("/proc/self/mountinfo")
@@ -144,8 +153,7 @@ func validateMountSources(c Config, worker string) error {
 		if err := syscall.Statfs(grant.Source, &fs); err != nil {
 			return err
 		}
-		switch uint64(fs.Type) {
-		case 0x9fa0, 0x62656572, 0x27e0eb, 0x63677270, 0x1cd1, 0x19800202, 0x64626720, 0x74726163, 0xcafe4a11, 0x73636673:
+		if protectedLinuxFilesystem(int64(fs.Type)) {
 			return problem("PERMISSION_DENIED", "不能挂载内核接口文件系统")
 		}
 		for _, line := range strings.Split(string(mountInfo), "\n") {

@@ -30,6 +30,17 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+func TestProfileStatusError(t *testing.T) {
+	for _, status := range []uintptr{0, 1, 0x7fffffff} {
+		if err := profileStatusError("测试", status); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := profileStatusError("测试", 0x80070005); err == nil || !strings.Contains(err.Error(), "0x80070005") {
+		t.Fatalf("应保留 HRESULT 的 32 位错误码：%v", err)
+	}
+}
+
 func TestWindowsJobSettings(t *testing.T) {
 	job, err := createWindowsJob(windowsProcessOptions{MemoryBytes: 128 * 1024 * 1024, Processes: 2, CPUPercent: 25})
 	if err != nil {

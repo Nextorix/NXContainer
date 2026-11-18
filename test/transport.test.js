@@ -28,6 +28,12 @@ test('流式字节不会破坏 UTF-8，子命令非零退出不是执行器崩�
   assert.equal(chunks.length, 3);
 });
 
+test('回调修改收到的字节不影响最终命令输出', async () => {
+  const value = await call('success', { onOutput: ({ data }) => data.fill(0) });
+  assert.equal(value.stdout.toString(), '中文输出');
+  assert.equal(value.stderr.toString(), '错误流');
+});
+
 test('严格处理协议错误与输出上限', async () => {
   for (const operation of ['malformed', 'large-line', 'missing-result', 'after-result']) {
     await assert.rejects(call(operation), { code: 'PROTOCOL_ERROR' });

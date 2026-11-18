@@ -58,7 +58,7 @@ export function invoke(binary, request, { signal, onOutput, timeoutMs = 15_000, 
           return;
         }
         (event.type === 'stdout' ? stdoutChunks : stderrChunks).push(data);
-        onOutput?.({ stream: event.type, data });
+        onOutput?.({ stream: event.type, data: Buffer.from(data) });
       } else if (event.type === 'result') {
         terminal = event;
       } else if (event.type === 'error' && typeof event.error?.code === 'string' && typeof event.error?.message === 'string') {

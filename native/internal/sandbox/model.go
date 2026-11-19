@@ -97,6 +97,7 @@ type Capabilities struct {
 	ReadOnlyMounts    bool   `json:"readOnlyMounts"`
 	PrivateFilesystem bool   `json:"privateFilesystem"`
 	NetworkNone       bool   `json:"networkNone"`
+	NetworkInternet   bool   `json:"networkInternet"`
 	Desktop           bool   `json:"desktop"`
 	ResourceQuotas    bool   `json:"resourceQuotas"`
 	Reason            string `json:"reason,omitempty"`
@@ -159,8 +160,8 @@ func ValidateConfig(c Config) error {
 	if !idPattern.MatchString(c.AgentID) {
 		return problem("INVALID_CONFIG", "agentId 不合法")
 	}
-	if c.Network != "none" || c.Desktop {
-		return problem("UNSUPPORTED_CAPABILITY", "只支持断网的非图形执行环境")
+	if (c.Network != "none" && c.Network != "internet") || c.Desktop {
+		return problem("UNSUPPORTED_CAPABILITY", "只支持断网或仅访问公网的非图形执行环境")
 	}
 	if len(c.Mounts) < 1 || len(c.Mounts) > 32 {
 		return problem("INVALID_CONFIG", "挂载数量必须在 1 到 32 之间")

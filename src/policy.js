@@ -66,7 +66,8 @@ export async function directory(input) {
 export async function normalizePolicy(input, allowedRoots, experimental) {
   object(input, ['agentId', 'mounts', 'network', 'desktop', 'limits'], '沙箱配置');
   if (typeof input.agentId !== 'string' || !ID.test(input.agentId)) fail('INVALID_CONFIG', 'agentId 必须是 1～64 位字母、数字、下划线或连字符');
-  if ((input.network ?? 'none') !== 'none') fail('UNSUPPORTED_CAPABILITY', '当前只支持完全断网');
+  const network = input.network ?? 'none';
+  if (!['none', 'internet'].includes(network)) fail('UNSUPPORTED_CAPABILITY', '网络只能是 none（断网）或 internet（仅公网）');
   if (input.desktop !== undefined && input.desktop !== false) fail('UNSUPPORTED_CAPABILITY', '当前版本尚不支持图形桌面');
   if (!Array.isArray(input.mounts) || input.mounts.length < 1 || input.mounts.length > 32) {
     fail('INVALID_CONFIG', '需要提供 1～32 个挂载目录');
@@ -103,7 +104,7 @@ export async function normalizePolicy(input, allowedRoots, experimental) {
   return Object.freeze({
     agentId: input.agentId,
     mounts: Object.freeze(mounts),
-    network: 'none',
+    network,
     desktop: false,
     experimental,
     limits: Object.freeze({

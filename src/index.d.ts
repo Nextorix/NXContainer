@@ -31,7 +31,8 @@ export interface Mount {
 export interface SandboxConfig {
   agentId: string;
   mounts: Mount[];
-  network?: 'none';
+  /** 默认 none 完全断网；internet 只允许出站访问公网，宿主回环与局域网仍不可达（Windows 授予 internetClient；Linux 经沙箱内的 HTTP(S) 代理，程序需遵循 HTTPS_PROXY 等环境变量）。 */
+  network?: 'none' | 'internet';
   /** 保留兼容字段；当前依赖库不提供完整 GUI，只接受 false。 */
   desktop?: false;
   limits?: { timeoutMs?: number; maxOutputBytes?: number; memoryBytes?: number; maxProcesses?: number; cpuPercent?: number };
@@ -57,6 +58,8 @@ export interface Capabilities {
   readOnlyMounts: boolean;
   privateFilesystem: boolean;
   networkNone: boolean;
+  /** 是否支持 network: 'internet'。 */
+  networkInternet: boolean;
   desktop: boolean;
   resourceQuotas: boolean;
   processQuotas: boolean;

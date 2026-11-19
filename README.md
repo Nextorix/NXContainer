@@ -44,6 +44,7 @@
 | 文件接口 | 在 LPAC 内通过 Go `os.Root` 执行 | 在沙箱内通过 Go `os.Root` 执行 |
 | 独立 HOME、临时目录和环境 | 每次执行独立、结束后清除 | 每次执行独立、结束后清除 |
 | 默认断网 | 不授予网络能力，已测试宿主回环连接被拒绝 | network namespace + seccomp，禁止 socket 创建 |
+| 可选联网（`network: 'internet'`） | 额外授予 `internetClient` 与 `lpacIdentityServices`，只能出站访问公网；已测试宿主回环仍被拒绝 | 仍在独立网络命名空间中，经沙箱内中继与宿主侧 HTTP(S) 代理访问公网（设置 `HTTPS_PROXY` 等环境变量），拒绝回环、私有网段、链路本地与本机地址；不遵循代理环境变量的程序、UDP 与 ICMP 无法联网 |
 | 超时、取消、输出预算 | Job Object 终止进程树 | 杀死隔离进程树 |
 | CPU、内存、进程数限制 | Job Object 硬限制 | 未实现，请求时明确拒绝 |
 | 工作区磁盘硬配额 | 未实现 | 未实现 |
@@ -231,7 +232,7 @@ try {
 
 ### 执行与文件
 
-Windows PowerShell 5 在当前 LPAC 环境不兼容。使用 PowerShell 7 portable 时，由宿主把可信安装目录显式只读挂载，再执行其绝对路径，并设置 `DOTNET_EnableDiagnostics=0` 与 `POWERSHELL_TELEMETRY_OPTOUT=1`。库为 PowerShell 的 ETW 初始化增加固定的 `lpacInstrumentation` 能力；不更改全局 ETW／设备 ACL，不开放网络。程序是否兼容仍须实测，失败不得回退到宿主进程。
+Windows PowerShell 5 在当前 LPAC 环境不兼容。使用 PowerShell 7 portable 时，由宿主把可信安装目录显式只读挂载，再执行其绝对路径，并设置 `DOTNET_EnableDiagnostics=0` 与 `POWERSHELL_TELEMETRY_OPTOUT=1`。库为 PowerShell 的 ETW 初始化增加固定的 `lpacInstrumentation` 能力；不更改全局 ETW／设备 ACL，默认不开放网络。程序是否兼容仍须实测，失败不得回退到宿主进程。
 
 - `exec(argv, options)` 不调用宿主 shell。需要 shell 语法时，显式执行隔离环境中的 `/bin/sh -c` 或 `cmd.exe /d /s /c`。
 - 最终 `stdout` / `stderr` 按 UTF-8 解码；传统 Windows 程序使用其他代码页时，应通过 `onOutput` 处理原始字节。

@@ -37,7 +37,7 @@ Linux 能力自检最多 5 秒，Windows 进程自检最多 10 秒。SDK 对管�
 {"version":1,"operation":"capabilities"}
 ```
 
-结果包含平台、后端、实验状态、项目验证进度 `validation`、`exec`、`files`、`readOnlyMounts`、`privateFilesystem`、`networkNone`、`desktop`、`resourceQuotas`、`processQuotas`、`desktopIsolation` 和不可用原因。
+结果包含平台、后端、实验状态、项目验证进度 `validation`、`exec`、`files`、`readOnlyMounts`、`privateFilesystem`、`networkNone`、`networkInternet`、`desktop`、`resourceQuotas`、`processQuotas`、`desktopIsolation` 和不可用原因。
 
 `validation` 描述项目验证进度，不是本次自检结果：
 
@@ -73,6 +73,8 @@ Windows 的 `processQuotas` 表示 CPU、提交内存和进程数限制；`resou
 Windows 策略可额外提供 `limits.memoryBytes`、`limits.maxProcesses`、`limits.cpuPercent`，范围及默认值见 README；Linux 收到非零进程配额时返回 `UNSUPPORTED_CAPABILITY`。Windows `paths` 默认是实际授权路径；挂载可另带 `alias`（已有的可信目录联接，必须指向 source），返回该显示路径。别名父目录不可与挂载源重叠，SDK 要求其位于 allowedRoots 内；原生端复核目标。alias 只在 Windows 接受，不是任意虚拟 C 盘。
 
 `workspace` 挂载既可 read-write，也可 read-only；只读策略在 SDK、原生文件接口和操作系统执行边界同时生效。改变访问类型必须 dispose 旧句柄并重新 createSandbox。
+
+`network` 默认 `none`。`internet` 只允许出站访问公网：Windows 额外授予 `internetClient` 与 `lpacIdentityServices`，宿主回环与局域网仍不可达；Linux 仍在独立网络命名空间中，命令经沙箱内的中继运行，`HTTP_PROXY` / `HTTPS_PROXY` 指向由宿主侧执行器代为连接公网的 HTTP 代理（只拒绝非公网地址，支持 CONNECT 与 `http://` 绝对地址），文件接口不经过中继。是否支持见能力报告的 `networkInternet`，不支持时 prepare 返回 `UNSUPPORTED_CAPABILITY`；切换网络同样需要重新 createSandbox。
 
 每次后续请求再次提交完整策略，原生执行器重新校验。SDK 在父进程内持有不可变策略与目录归属登记；原生协议使用方必须自己负责多 Agent 的所有权协调。
 

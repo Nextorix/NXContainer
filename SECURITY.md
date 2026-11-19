@@ -39,7 +39,8 @@
 - 每次操作创建随机、独立的 AppContainer SID；不同 Agent 不共用该 SID。不创建新的 Windows 用户。
 - 以挂起状态启动 LPAC，原子加入无逃逸选项的 Job，只继承单独的三条标准流句柄。
 - 恢复线程前永久移除除 `SeChangeNotifyPrivilege` 外的特权，再核验低完整性、无 UIAccess、AppContainer SID、LPAC 访问语义与能力列表。不能只把额外特权标为禁用，因为任务可能重新启用它们。
-- 固定附加能力为初始化 Win32/Winsock 所需的 `registryRead` 与 PowerShell ETW 注册所需的 `lpacInstrumentation`，恢复线程前核验准确列表；不授予任何网络能力，不修改全局 ETW／设备 ACL。可访问操作系统允许这些能力访问的注册表和诊断资源，不声称提供空注册表、完全私有 ETW 或私有系统镜像。
+- 固定附加能力为初始化 Win32/Winsock 所需的 `registryRead` 与 PowerShell ETW 注册所需的 `lpacInstrumentation`，恢复线程前核验准确列表；默认不授予任何网络能力，不修改全局 ETW／设备 ACL。
+- 仅当策略为 `network: 'internet'` 时再加 `internetClient`（出站访问公网）与 `lpacIdentityServices`（经 SSPI 使用 SChannel 建立 TLS）。不授予 `internetClientServer` 或 `privateNetworkClientServer`，AppContainer 网络隔离继续阻止宿主回环与局域网；联网后沙箱内程序可以把授权目录中的内容发送到公网，是否允许联网由消费应用按任务授权。可访问操作系统允许这些能力访问的注册表和诊断资源，不声称提供空注册表、完全私有 ETW 或私有系统镜像。
 - 授权树只增加当前包 SID 的读/执行或修改权限，不增加 WRITE_DAC / WRITE_OWNER。Windows 双重访问检查仍必须成立。
 - 通过 `os.Root` 与相对 NT 对象句柄打开目录项，拒绝重解析点和硬链接；使用非递归对象安全接口，避免按路径递归修改目录联接目标。
 - 目录 ACE 可被新对象继承。结束后恢复已有对象的 DACL，再移除新对象上的本次 SID；不回滚任务有意写入的数据。
@@ -63,7 +64,8 @@ Windows 没有私有文件系统视图或 PID 命名空间：实际路径和部�
 - `/dev` 由 bubblewrap 创建最小设备集；私有 `/tmp`、HOME、运行目录与共享内存 tmpfs 有单挂载大小上限。
 - 新终端会话，无宿主终端、桌面、SSH agent、Docker socket、环境凭据继承。
 - seccomp 校验 amd64/arm64 架构，拒绝 x32/兼容 ABI、socket 创建、ptrace、process_vm、keyring、内核管理和 io_uring 等入口；clone3 返回 ENOSYS 以允许 libc 回退。
-- 网络仅支持完全关闭。禁止创建 socket 包括 Unix socket，避免“只读挂载里的控制 socket 仍可连接”的旁路；匿名 socketpair 可用于本沙箱内部通信。
+- 默认完全断网：禁止创建 socket 包括 Unix socket，避免“只读挂载里的控制 socket 仍可连接”的旁路；匿名 socketpair 可用于本沙箱内部通信。
+- `network: 'internet'` 不共享宿主网络命名空间（共享会暴露本机回环服务与抽象 Unix socket）：沙箱仍在只有回环接口的独立网络命名空间中，seccomp 只额外放行 AF_INET / AF_INET6 的 socket，Unix、netlink、packet 等协议族照旧拒绝。沙箱内的中继（执行器自身）在回环上监听 HTTP 代理端口、设置 `HTTP(S)_PROXY`，把每个连接的描述符经 SEQPACKET 控制套接字交给宿主侧执行器；宿主侧只接受 IPv4 / IPv6 的 TCP 流式套接字，所以沙箱内程序拿到控制套接字也不能扩大权限。CONNECT 隧道与 `http://` 请求在实际连接时按解析出的 IP 拒绝回环、私有网段、链路本地（含云元数据地址）、保留网段与本机网卡地址，DNS 重绑定同样无效。只读挂载系统 CA 证书目录，不挂载 `/etc/ssl` 中的其他内容。不遵循代理环境变量的程序、UDP 与 ICMP 无法联网。联网后沙箱内程序可以把授权目录中的内容发送到公网，是否允许联网由消费应用按任务授权。
 - 超时、取消或控制管道关闭会停止 bubblewrap 进程组；bubblewrap 的父死亡机制和 PID namespace 负责清理内部进程。
 - 文件接口进入相同沙箱后运行 Go `os.Root`，不会在宿主中用字符串拼接实现文件访问。
 

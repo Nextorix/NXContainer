@@ -29,7 +29,7 @@ func TestAliasACLRestoration(t *testing.T) {
 	if err := os.Symlink(source, alias); err != nil {
 		t.Fatal(err)
 	}
-	profile, err := newWindowsProfile()
+	profile, err := newWindowsProfile(false)
 	if err != nil {
 		t.Fatal(err)
 	}

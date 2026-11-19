@@ -54,6 +54,7 @@ type windowsProfile struct {
 	name         string
 	sid          *windows.SID
 	capabilities []windows.SIDAndAttributes
+	internet     bool
 }
 
 func windowsCapability(capability string) ([]windows.SIDAndAttributes, error) {
@@ -96,12 +97,19 @@ func profileStatusError(operation string, status uintptr) error {
 	return nil
 }
 
-func newWindowsProfile() (*windowsProfile, error) {
+// internet 为 true 时额外授予 internetClient 与 lpacIdentityServices：前者只允许出站访问公网，
+// AppContainer 网络隔离仍阻止本机回环与局域网（未授予 privateNetworkClientServer）；
+// 后者让 LPAC 进程能通过 SSPI 使用 SChannel，否则 TLS 握手报“要求的安全包不存在”。
+func newWindowsProfile(internet bool) (*windowsProfile, error) {
 	if err := winCreateProfile.Find(); err != nil {
 		return nil, err
 	}
 	var capabilities []windows.SIDAndAttributes
-	for _, name := range []string{"registryRead", "lpacInstrumentation"} {
+	names := []string{"registryRead", "lpacInstrumentation"}
+	if internet {
+		names = append(names, "internetClient", "lpacIdentityServices")
+	}
+	for _, name := range names {
 		grant, err := windowsCapability(name)
 		if err != nil {
 			return nil, err
@@ -119,7 +127,7 @@ func newWindowsProfile() (*windowsProfile, error) {
 	if err := profileStatusError("创建 AppContainer 身份", status); err != nil {
 		return nil, err
 	}
-	return &windowsProfile{name: name, sid: sid, capabilities: capabilities}, nil
+	return &windowsProfile{name: name, sid: sid, capabilities: capabilities, internet: internet}, nil
 }
 
 func (p *windowsProfile) close() error {
@@ -417,11 +425,16 @@ func runWindowsProcess(ctx context.Context, profile *windowsProfile, desktop *wi
 	}
 	defer attributes.Delete()
 	// registryRead 用于 Win32 初始化；lpacInstrumentation 用于 PowerShell 的 ETW 注册。
-	// 两者都是固定的系统能力，不开放网络，不修改全局设备或 ETW 提供者的 ACL。
-	if len(profile.capabilities) != 2 {
-		return -1, fmt.Errorf("Windows 进程必须恰有 registryRead 和 lpacInstrumentation 两个能力")
+	// 两者都是固定的系统能力，不开放网络，不修改全局设备或 ETW 提供者的 ACL；
+	// 只有显式请求联网的沙箱才额外带 internetClient 与 lpacIdentityServices。
+	expected := 2
+	if profile.internet {
+		expected = 4
 	}
-	capabilities := windowsSecurityCapabilities{AppContainerSID: profile.sid, Capabilities: &profile.capabilities[0], CapabilityCount: 2}
+	if len(profile.capabilities) != expected {
+		return -1, fmt.Errorf("Windows 进程的能力必须恰为 registryRead、lpacInstrumentation（联网时另加 internetClient、lpacIdentityServices）")
+	}
+	capabilities := windowsSecurityCapabilities{AppContainerSID: profile.sid, Capabilities: &profile.capabilities[0], CapabilityCount: uint32(expected)}
 	policy := uint32(1)
 	for _, attribute := range []struct {
 		key   uintptr

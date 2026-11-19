@@ -45,6 +45,11 @@ func TestConfig(t *testing.T) {
 	if err := ValidateConfig(c); err != nil {
 		t.Fatal(err)
 	}
+	internet := c
+	internet.Network = "internet"
+	if err := ValidateConfig(internet); err != nil {
+		t.Fatal(err)
+	}
 	cases := []struct {
 		name   string
 		change func(*Config)

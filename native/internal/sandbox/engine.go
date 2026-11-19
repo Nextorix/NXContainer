@@ -32,6 +32,9 @@ func Prepare(ctx context.Context, c Config) (Prepared, error) {
 	if !capabilities.Exec {
 		return Prepared{}, problem("BACKEND_UNAVAILABLE", capabilities.Reason)
 	}
+	if c.Network == "internet" && !capabilities.NetworkInternet {
+		return Prepared{}, problem("UNSUPPORTED_CAPABILITY", "当前平台的沙箱不支持联网")
+	}
 	if !c.Experimental {
 		return Prepared{}, problem("EXPERIMENTAL_REQUIRED", "此平台后端尚未完成安全验收，需要管理方显式开启实验选项")
 	}

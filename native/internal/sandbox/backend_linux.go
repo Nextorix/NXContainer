@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -68,23 +69,31 @@ func Probe(ctx context.Context) Capabilities {
 	c := Capabilities{Platform: "linux", Architecture: runtime.GOARCH, Backend: "bubblewrap", Status: "experimental", Validation: validationStatus(runtime.GOOS, runtime.GOARCH)}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	config := Config{AgentID: "probe"}
-	cmd, err := buildCommand(ctx, config, Command{Argv: []string{"/usr/bin/true"}})
-	if err == nil {
-		defer closeExtraFiles(cmd)
-		var output bytes.Buffer
-		cmd.Stderr = &output
-		err = cmd.Run()
-		if err != nil {
-			err = fmt.Errorf("隔离自检失败：%s", strings.TrimSpace(output.String()))
-		}
-	}
-	if err != nil {
+	if err := probeCommand(ctx, Config{AgentID: "probe"}); err != nil {
 		c.Reason = err.Error()
 		return c
 	}
 	c.Exec, c.Files, c.ReadOnlyMounts, c.PrivateFilesystem, c.NetworkNone = true, true, true, true, true
+	// 联网沙箱只多一个沙箱内的网络中继：能在沙箱回环上监听并运行命令即视为支持。
+	c.NetworkInternet = probeCommand(ctx, Config{AgentID: "probe", Network: "internet"}) == nil
 	return c
+}
+
+func probeCommand(ctx context.Context, config Config) error {
+	cmd, control, err := buildCommand(ctx, config, Command{Argv: []string{"/usr/bin/true"}})
+	if err != nil {
+		return err
+	}
+	defer closeExtraFiles(cmd)
+	if control != nil {
+		defer control.Close()
+	}
+	var output bytes.Buffer
+	cmd.Stderr = &output
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("隔离自检失败：%s", strings.TrimSpace(output.String()))
+	}
+	return nil
 }
 
 func systemArguments() ([]string, error) {
@@ -119,6 +128,17 @@ func systemArguments() ([]string, error) {
 		args = append(args, "--ro-bind", "/etc/ld.so.cache", "/etc/ld.so.cache")
 	}
 	return args, nil
+}
+
+// 联网沙箱只读挂载系统 CA 证书，HTTPS 客户端才能校验证书；不挂载 /etc/ssl 中的其他内容（如私钥目录）。
+func certificateArguments() []string {
+	var args []string
+	for _, name := range []string{"/etc/ssl/certs", "/etc/ssl/cert.pem", "/etc/pki/tls/certs", "/etc/pki/tls/cert.pem", "/etc/pki/ca-trust/extracted"} {
+		if _, err := os.Stat(name); err == nil {
+			args = append(args, "--ro-bind", name, name)
+		}
+	}
+	return args
 }
 
 func protectedLinuxFilesystem(fsType int64) bool {
@@ -188,14 +208,27 @@ func runPlatform(ctx context.Context, c Config, command Command, stdout, stderr 
 	if err := validatePlatform(c); err != nil {
 		return -1, err
 	}
-	cmd, err := buildCommand(ctx, c, command)
+	cmd, control, err := buildCommand(ctx, c, command)
 	if err != nil {
 		return -1, err
 	}
 	defer closeExtraFiles(cmd)
+	if control != nil {
+		defer control.Close()
+	}
 	cmd.Stdin = strings.NewReader(command.Stdin)
 	cmd.Stdout, cmd.Stderr = stdout, stderr
-	if err := cmd.Run(); err != nil {
+	if err := cmd.Start(); err != nil {
+		return -1, err
+	}
+	// 父进程不保留交给沙箱的描述符：沙箱内的中继退出后，控制套接字随之结束。
+	closeExtraFiles(cmd)
+	if control != nil {
+		proxy := newNetProxy(ctx, publicDialer())
+		defer proxy.close()
+		go serveRelay(control, proxy)
+	}
+	if err := cmd.Wait(); err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) {
 			return exit.ExitCode(), nil
@@ -205,27 +238,92 @@ func runPlatform(ctx context.Context, c Config, command Command, stdout, stderr 
 	return 0, nil
 }
 
-func buildCommand(ctx context.Context, c Config, command Command) (*exec.Cmd, error) {
+// 接收沙箱内中继交来的客户端连接，交给宿主侧代理；控制套接字结束或关闭时返回。
+func serveRelay(control *net.UnixConn, proxy *netProxy) {
+	buffer := make([]byte, 16)
+	oob := make([]byte, syscall.CmsgSpace(4*8))
+	for {
+		n, oobn, _, _, err := control.ReadMsgUnix(buffer, oob)
+		if oobn > 0 {
+			if messages, parseErr := syscall.ParseSocketControlMessage(oob[:oobn]); parseErr == nil {
+				for i := range messages {
+					fds, rightsErr := syscall.ParseUnixRights(&messages[i])
+					if rightsErr != nil {
+						continue
+					}
+					for _, fd := range fds {
+						acceptRelayed(fd, proxy)
+					}
+				}
+			}
+		}
+		if err != nil || (n == 0 && oobn == 0) {
+			return
+		}
+	}
+}
+
+// 只接受 IPv4 / IPv6 的 TCP 流式套接字（中继接受的客户端连接），其他描述符直接关闭。
+func acceptRelayed(fd int, proxy *netProxy) {
+	file := os.NewFile(uintptr(fd), "nx-sandbox-client")
+	defer file.Close()
+	kind, err := syscall.GetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_TYPE)
+	if err != nil || kind != syscall.SOCK_STREAM {
+		return
+	}
+	domain, err := syscall.GetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_DOMAIN)
+	if err != nil || (domain != syscall.AF_INET && domain != syscall.AF_INET6) {
+		return
+	}
+	conn, err := net.FileConn(file)
+	if err != nil {
+		return
+	}
+	proxy.serve(conn)
+}
+
+// 中继与宿主侧执行器之间的控制套接字：SEQPACKET 保留消息边界，每条消息携带一个连接的描述符。
+func relayControlPair() (*net.UnixConn, *os.File, error) {
+	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_SEQPACKET|syscall.SOCK_CLOEXEC, 0)
+	if err != nil {
+		return nil, nil, err
+	}
+	host := os.NewFile(uintptr(fds[0]), "nx-control")
+	conn, err := net.FileConn(host)
+	host.Close()
+	if err != nil {
+		syscall.Close(fds[1])
+		return nil, nil, err
+	}
+	return conn.(*net.UnixConn), os.NewFile(uintptr(fds[1]), "nx-relay"), nil
+}
+
+// 联网沙箱（文件接口除外）经沙箱内的网络中继运行用户命令，control 为宿主侧的控制套接字，其余情况为 nil。
+func buildCommand(ctx context.Context, c Config, command Command) (*exec.Cmd, *net.UnixConn, error) {
 	worker, err := os.Executable()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := validateMountSources(c, worker); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	bwrap, err := findBubblewrap(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	system, err := systemArguments()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	network := c.Network == "internet" && len(command.Argv) > 0 && command.Argv[0] != "/nx/worker"
 	args := []string{
 		"--unshare-user", "--unshare-pid", "--unshare-net", "--unshare-ipc", "--unshare-uts", "--unshare-cgroup",
 		"--disable-userns", "--assert-userns-disabled", "--cap-drop", "ALL", "--new-session", "--die-with-parent", "--clearenv",
 	}
 	args = append(args, system...)
+	if network {
+		args = append(args, certificateArguments()...)
+	}
 	args = append(args,
 		"--proc", "/proc", "--remount-ro", "/proc", "--dev", "/dev",
 		"--size", "16777216", "--tmpfs", "/dev/shm", "--remount-ro", "/dev",
@@ -245,7 +343,7 @@ func buildCommand(ctx context.Context, c Config, command Command) (*exec.Cmd, er
 	if command.Cwd != "" {
 		cwd, err = resolveCwd(c, command.Cwd)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	args = append(args, "--setenv", "PATH", "/usr/local/bin:/usr/bin:/bin", "--setenv", "HOME", "/home/agent",
@@ -259,15 +357,29 @@ func buildCommand(ctx context.Context, c Config, command Command) (*exec.Cmd, er
 	for _, key := range keys {
 		args = append(args, "--setenv", key, command.Env[key])
 	}
-	filter, err := seccompFile()
+	filter, err := seccompFile(network)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	extra := []*os.File{filter}
+	argv := command.Argv
+	var control *net.UnixConn
+	if network {
+		var relay *os.File
+		control, relay, err = relayControlPair()
+		if err != nil {
+			filter.Close()
+			return nil, nil, err
+		}
+		// fd 3 为 seccomp 过滤器，fd 4 为中继的控制套接字（见 relayControlFD）。
+		extra = append(extra, relay)
+		argv = append([]string{"/nx/worker", "--net-relay"}, argv...)
 	}
 	args = append(args, "--seccomp", "3", "--remount-ro", "/", "--chdir", cwd, "--")
-	args = append(args, command.Argv...)
+	args = append(args, argv...)
 	cmd := exec.CommandContext(ctx, bwrap, args...)
 	cmd.Env = []string{"PATH=/usr/bin:/bin", "LANG=C"}
-	cmd.ExtraFiles = []*os.File{filter}
+	cmd.ExtraFiles = extra
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
 		if cmd.Process == nil {
@@ -280,7 +392,7 @@ func buildCommand(ctx context.Context, c Config, command Command) (*exec.Cmd, er
 		return err
 	}
 	cmd.WaitDelay = time.Second
-	return cmd, nil
+	return cmd, control, nil
 }
 
 func closeExtraFiles(cmd *exec.Cmd) {
@@ -289,8 +401,8 @@ func closeExtraFiles(cmd *exec.Cmd) {
 	}
 }
 
-func seccompFile() (*os.File, error) {
-	program, err := seccompProgram(runtime.GOARCH)
+func seccompFile(network bool) (*os.File, error) {
+	program, err := seccompProgram(runtime.GOARCH, network)
 	if err != nil {
 		return nil, err
 	}

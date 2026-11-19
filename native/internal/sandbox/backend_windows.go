@@ -62,7 +62,7 @@ func Probe(ctx context.Context) (capabilities Capabilities) {
 		if err == nil {
 			return
 		}
-		capabilities.Exec, capabilities.Files, capabilities.ReadOnlyMounts, capabilities.NetworkNone = false, false, false, false
+		capabilities.Exec, capabilities.Files, capabilities.ReadOnlyMounts, capabilities.NetworkNone, capabilities.NetworkInternet = false, false, false, false, false
 		capabilities.ProcessQuotas, capabilities.DesktopIsolation = false, false
 		capabilities.Reason = "隔离自检清理失败：" + err.Error()
 	}
@@ -74,7 +74,7 @@ func Probe(ctx context.Context) (capabilities Capabilities) {
 		return capabilities
 	}
 	defer func() { cleanupFailed(os.RemoveAll(home)) }()
-	profile, err := newWindowsProfile()
+	profile, err := newWindowsProfile(false)
 	if err != nil {
 		capabilities.Reason = err.Error()
 		return capabilities
@@ -107,6 +107,10 @@ func Probe(ctx context.Context) (capabilities Capabilities) {
 	}
 	capabilities.Exec, capabilities.Files, capabilities.ReadOnlyMounts, capabilities.NetworkNone = true, true, true, true
 	capabilities.ProcessQuotas, capabilities.DesktopIsolation = true, true
+	// 联网沙箱只多 internetClient 与 lpacIdentityServices 两个能力；都能派生出能力 SID 即视为支持。
+	_, internetErr := windowsCapability("internetClient")
+	_, identityErr := windowsCapability("lpacIdentityServices")
+	capabilities.NetworkInternet = internetErr == nil && identityErr == nil
 	return capabilities
 }
 
@@ -231,7 +235,7 @@ func runPlatform(ctx context.Context, c Config, command Command, stdout, stderr 
 	if err != nil {
 		return -1, err
 	}
-	profile, err := newWindowsProfile()
+	profile, err := newWindowsProfile(c.Network == "internet")
 	if err != nil {
 		return -1, err
 	}

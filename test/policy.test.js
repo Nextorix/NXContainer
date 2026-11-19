@@ -37,6 +37,7 @@ test('策略是不可变快照，不修改宿主权限', async (t) => {
   assert.ok(Object.isFrozen(result.mounts[0]));
   assert.equal(result.network, 'none');
   assert.equal(result.desktop, false);
+  assert.equal((await normalizePolicy({ ...config('agent-a', a), network: 'internet' }, [root], true)).network, 'internet');
 });
 
 test('拒绝未知能力、重复挂载、越界目录及无效身份', async (t) => {

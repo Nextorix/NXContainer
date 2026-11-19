@@ -22,6 +22,8 @@ jobs:
     env:
       NXCONTAINER_REQUIRE_RUNTIME: '1'
       NXCONTAINER_REQUIRE_LINUX: '1'
+      # 联网沙箱的集成测试经代理实际访问一次公网 HTTPS
+      NXCONTAINER_TEST_INTERNET: '1'
     steps:
       - uses: actions/checkout@v4
         with:

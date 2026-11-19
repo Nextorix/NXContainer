@@ -44,7 +44,11 @@ type Mount struct {
 	Source string `json:"source"`
 	Access string `json:"access"`
 	Alias  string `json:"alias,omitempty"`
+	// Target 为 Linux 沙箱内的挂载位置（如多个 Agent 共用的 /Agents/Shared/x），缺省为 /Agents/<agentId>/<name>。
+	Target string `json:"target,omitempty"`
 }
+
+var targetPattern = regexp.MustCompile(`^/Agents(/[A-Za-z0-9][A-Za-z0-9_-]{0,63}){2,8}$`)
 
 type Limits struct {
 	TimeoutMs      int    `json:"timeoutMs"`
@@ -213,9 +217,22 @@ func ValidateConfig(c Config) error {
 				return problem("UNSAFE_PATH", "显示联接必须指向当前挂载源")
 			}
 		}
+		if m.Target != "" {
+			own := path.Join("/Agents", c.AgentID)
+			if runtime.GOOS == "windows" || m.Name == "workspace" || !targetPattern.MatchString(m.Target) {
+				return problem("INVALID_CONFIG", "target 只支持 Linux 上 workspace 以外的挂载，且必须是 /Agents 下的规范路径")
+			}
+			if m.Target == own || strings.HasPrefix(m.Target, own+"/") {
+				return problem("MOUNT_CONFLICT", "target 不能位于本 Agent 的默认挂载目录内")
+			}
+		}
 		for _, previous := range c.Mounts[:i] {
 			if contained(previous.Source, m.Source) || contained(m.Source, previous.Source) {
 				return problem("MOUNT_CONFLICT", "挂载源不能重叠")
+			}
+			a, b := mountPath(c, previous.Name), mountPath(c, m.Name)
+			if runtime.GOOS != "windows" && (a == b || strings.HasPrefix(a, b+"/") || strings.HasPrefix(b, a+"/")) {
+				return problem("MOUNT_CONFLICT", "沙箱内的挂载位置不能重叠")
 			}
 		}
 	}
@@ -259,6 +276,11 @@ func mountPath(c Config, name string) string {
 		}
 		return ""
 	}
+	for _, mount := range c.Mounts {
+		if mount.Name == name && mount.Target != "" {
+			return mount.Target
+		}
+	}
 	return path.Join("/Agents", c.AgentID, name)
 }
 
@@ -283,7 +305,10 @@ func resolveCwd(c Config, cwd string) (string, error) {
 				}
 				return filepath.Join(mountPath(c, m.Name), filepath.FromSlash(parts[1])), nil
 			}
-			return path.Join("/Agents", c.AgentID, cwd), nil
+			if len(parts) == 1 {
+				return mountPath(c, m.Name), nil
+			}
+			return path.Join(mountPath(c, m.Name), parts[1]), nil
 		}
 	}
 	return "", problem("PERMISSION_DENIED", "cwd 不属于已授权挂载")

@@ -27,6 +27,8 @@ export interface Mount {
   access: 'read-only' | 'read-write';
   /** Windows 可选显示联接。必须由可信宿主创建、指向 source，父目录也须在 allowedRoots 内；不授予父目录写权限。 */
   alias?: string;
+  /** Linux 可选的沙箱内挂载位置（/Agents 下的规范路径，如多个 Agent 共用的 /Agents/Shared/x）；不能用于 workspace，也不能位于本 Agent 的默认目录 /Agents/<agentId> 内。缺省为 /Agents/<agentId>/<name>。 */
+  target?: string;
 }
 export interface SandboxConfig {
   agentId: string;

@@ -118,3 +118,18 @@ test('没有隐式目录授权或 shell 后备', async () => {
   await nx.close();
   await assert.rejects(nx.capabilities(), { code: 'CLOSED' });
 });
+
+test('target 只用于 Linux 上的非工作区挂载，位置不能重叠', async (t) => {
+  const { root, a, b } = await fixture(t);
+  const input = { agentId: 'agent-a', mounts: [{ name: 'workspace', source: a, access: 'read-write' }, { name: 'shared', source: b, access: 'read-write', target: '/Agents/Shared/All_Agents' }] };
+  if (process.platform === 'win32') {
+    await assert.rejects(normalizePolicy(input, [root], true), { code: 'INVALID_CONFIG' });
+    return;
+  }
+  const policy = await normalizePolicy(input, [root], true);
+  assert.equal(policy.mounts[1].target, '/Agents/Shared/All_Agents');
+  for (const target of ['/Agents/agent-a/shared', '/Agents/Shared', '/tmp/x', '/Agents/Shared/../x']) {
+    await assert.rejects(normalizePolicy({ ...input, mounts: [input.mounts[0], { ...input.mounts[1], target }] }, [root], true));
+  }
+  await assert.rejects(normalizePolicy({ ...input, mounts: [{ ...input.mounts[0], target: '/Agents/Shared/W' }, input.mounts[1]] }, [root], true));
+});

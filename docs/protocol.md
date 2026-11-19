@@ -70,7 +70,7 @@ Windows 的 `processQuotas` 表示 CPU、提交内存和进程数限制；`resou
 
 校验源目录与后端，返回 `agentId`、逻辑名称到沙箱路径的 `paths` 和 `ephemeral: true`。不创建宿主工作区、系统用户或常驻容器。能力自检会创建并清理临时运行资源，Windows 还包括临时 AppContainer 注册和私有桌面。
 
-Windows 策略可额外提供 `limits.memoryBytes`、`limits.maxProcesses`、`limits.cpuPercent`，范围及默认值见 README；Linux 收到非零进程配额时返回 `UNSUPPORTED_CAPABILITY`。Windows `paths` 默认是实际授权路径；挂载可另带 `alias`（已有的可信目录联接，必须指向 source），返回该显示路径。别名父目录不可与挂载源重叠，SDK 要求其位于 allowedRoots 内；原生端复核目标。alias 只在 Windows 接受，不是任意虚拟 C 盘。
+Windows 策略可额外提供 `limits.memoryBytes`、`limits.maxProcesses`、`limits.cpuPercent`，范围及默认值见 README；Linux 收到非零进程配额时返回 `UNSUPPORTED_CAPABILITY`。Windows `paths` 默认是实际授权路径；挂载可另带 `alias`（已有的可信目录联接，必须指向 source），返回该显示路径。别名父目录不可与挂载源重叠，SDK 要求其位于 allowedRoots 内；原生端复核目标。alias 只在 Windows 接受，不是任意虚拟 C 盘。Linux 的挂载可另带 `target`（workspace 除外）：沙箱内的挂载位置，必须是 `/Agents` 下至少两级的规范路径，不能位于本 Agent 的 `/Agents/<agentId>` 内，且与其他挂载的位置不重叠；`paths` 返回该位置。
 
 `workspace` 挂载既可 read-write，也可 read-only；只读策略在 SDK、原生文件接口和操作系统执行边界同时生效。改变访问类型必须 dispose 旧句柄并重新 createSandbox。
 

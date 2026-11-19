@@ -16,6 +16,7 @@ import { realpath, lstat } from 'node:fs/promises';
 import { fail } from './errors.js';
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+const TARGET = /^\/Agents(\/[A-Za-z0-9][A-Za-z0-9_-]{0,63}){2,8}$/;
 export const MAX_FILE_BYTES = 1024 * 1024;
 
 export function object(value, keys, label) {
@@ -77,7 +78,7 @@ export async function normalizePolicy(input, allowedRoots, experimental) {
   const names = new Set();
   const mounts = [];
   for (const mount of input.mounts) {
-    object(mount, ['source', 'name', 'access', 'alias'], '挂载');
+    object(mount, ['source', 'name', 'access', 'alias', 'target'], '挂载');
     if (typeof mount.name !== 'string' || !ID.test(mount.name) || names.has(mount.name.toLowerCase())) fail('INVALID_CONFIG', '挂载名不合法或重复');
     names.add(mount.name.toLowerCase());
     if (!['read-only', 'read-write'].includes(mount.access)) fail('INVALID_CONFIG', '挂载权限必须是 read-only 或 read-write');
@@ -93,7 +94,23 @@ export async function normalizePolicy(input, allowedRoots, experimental) {
       if (!(await lstat(alias)).isSymbolicLink() || (await realpath(alias)).toLowerCase() !== source.toLowerCase()) fail('UNSAFE_PATH', 'alias 必须是直接指向当前挂载源的目录联接');
       if (overlap(parent, source)) fail('MOUNT_CONFLICT', '联接父目录与挂载源不能重叠');
     }
-    mounts.push(Object.freeze({ source, name: mount.name, access: mount.access, ...(alias ? { alias } : {}) }));
+    let target;
+    if (mount.target !== undefined) {
+      // Linux 沙箱内的挂载位置，供多个 Agent 在同一路径看到同一目录；不是宿主路径
+      if (process.platform === 'win32' || mount.name === 'workspace' || typeof mount.target !== 'string' || !TARGET.test(mount.target)) {
+        fail('INVALID_CONFIG', 'target 只支持 Linux 上 workspace 以外的挂载，且必须是 /Agents 下的规范路径');
+      }
+      const own = `/Agents/${input.agentId}`;
+      if (mount.target === own || mount.target.startsWith(`${own}/`)) fail('MOUNT_CONFLICT', 'target 不能位于本 Agent 的默认挂载目录内');
+      target = mount.target;
+    }
+    mounts.push(Object.freeze({ source, name: mount.name, access: mount.access, ...(alias ? { alias } : {}), ...(target ? { target } : {}) }));
+  }
+  if (process.platform !== 'win32') {
+    const at = (m) => m.target || `/Agents/${input.agentId}/${m.name}`;
+    for (const a of mounts) for (const b of mounts) {
+      if (a !== b && (at(a) === at(b) || at(a).startsWith(`${at(b)}/`))) fail('MOUNT_CONFLICT', '沙箱内的挂载位置不能重叠');
+    }
   }
   for (const mount of mounts) {
     if (mount.alias && mounts.some((other) => overlap(path.dirname(mount.alias), other.source))) fail('MOUNT_CONFLICT', '显示联接的父目录不能位于任何挂载源内');

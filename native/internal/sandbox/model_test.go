@@ -17,6 +17,7 @@ import (
 	"encoding/base64"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -188,5 +189,48 @@ func TestFileLinkEscape(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(outside, "secret"))
 	if err != nil || string(data) != "不应读取" {
 		t.Fatal("沙箱外文件发生改变")
+	}
+}
+
+func TestMountTarget(t *testing.T) {
+	c := testConfig(t)
+	shared := t.TempDir()
+	c.Mounts = append(c.Mounts, Mount{Name: "shared", Source: shared, Access: "read-write", Target: "/Agents/Shared/All_Agents"})
+	if runtime.GOOS == "windows" {
+		if ValidateConfig(c) == nil {
+			t.Fatal("Windows 应当拒绝 target")
+		}
+		return
+	}
+	if err := ValidateConfig(c); err != nil {
+		t.Fatal(err)
+	}
+	if got := Paths(c).Paths["shared"]; got != "/Agents/Shared/All_Agents" {
+		t.Fatalf("挂载位置为 %s", got)
+	}
+	if got := Paths(c).Paths["workspace"]; got != "/Agents/agent-a/workspace" {
+		t.Fatalf("工作区位置为 %s", got)
+	}
+	if got, err := resolveCwd(c, "shared/runtimes"); err != nil || got != "/Agents/Shared/All_Agents/runtimes" {
+		t.Fatalf("cwd 为 %s，%v", got, err)
+	}
+	for _, target := range []string{"/Agents/agent-a/shared", "/Agents/agent-a", "/Agents/Shared", "/tmp/shared", "/Agents/Shared/../x", "/Agents/Shared/All_Agents/"} {
+		candidate := c
+		candidate.Mounts = append([]Mount(nil), c.Mounts...)
+		candidate.Mounts[1].Target = target
+		if ValidateConfig(candidate) == nil {
+			t.Fatalf("应当拒绝 target %s", target)
+		}
+	}
+	nested := c
+	nested.Mounts = append(append([]Mount(nil), c.Mounts...), Mount{Name: "inner", Source: t.TempDir(), Access: "read-only", Target: "/Agents/Shared/All_Agents/inner"})
+	if ValidateConfig(nested) == nil {
+		t.Fatal("应当拒绝嵌套的挂载位置")
+	}
+	workspace := c
+	workspace.Mounts = append([]Mount(nil), c.Mounts...)
+	workspace.Mounts[0].Target = "/Agents/Shared/Workspace"
+	if ValidateConfig(workspace) == nil {
+		t.Fatal("workspace 不能指定 target")
 	}
 }

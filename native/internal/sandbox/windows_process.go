@@ -9,7 +9,7 @@
  * MoyuZJ <moyuzj@nextorix.dev> @Nextorix
  * Made in China with ♥
  *
- * Copyright (C) 2026 Nextorix LLC.
+ * Copyright (C) 2026 Nextorix
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
@@ -54,13 +54,14 @@ type windowsProfile struct {
 	name         string
 	sid          *windows.SID
 	capabilities []windows.SIDAndAttributes
+	internet     bool
 }
 
-func windowsRegistryReadCapability() ([]windows.SIDAndAttributes, error) {
+func windowsCapability(capability string) ([]windows.SIDAndAttributes, error) {
 	if err := winDeriveCapabilities.Find(); err != nil {
 		return nil, err
 	}
-	name, _ := windows.UTF16PtrFromString("registryRead")
+	name, _ := windows.UTF16PtrFromString(capability)
 	var groups, capabilities **windows.SID
 	var groupCount, capabilityCount uint32
 	ok, _, callErr := winDeriveCapabilities.Call(uintptr(unsafe.Pointer(name)), uintptr(unsafe.Pointer(&groups)), uintptr(unsafe.Pointer(&groupCount)), uintptr(unsafe.Pointer(&capabilities)), uintptr(unsafe.Pointer(&capabilityCount)))
@@ -79,7 +80,7 @@ func windowsRegistryReadCapability() ([]windows.SIDAndAttributes, error) {
 		}
 	}()
 	if capabilityCount != 1 {
-		return nil, fmt.Errorf("registryRead 能力 SID 数量异常")
+		return nil, fmt.Errorf("%s 能力 SID 数量异常", capability)
 	}
 	sid, err := (*capabilities).Copy()
 	if err != nil {
@@ -88,13 +89,32 @@ func windowsRegistryReadCapability() ([]windows.SIDAndAttributes, error) {
 	return []windows.SIDAndAttributes{{Sid: sid, Attributes: windows.SE_GROUP_ENABLED}}, nil
 }
 
-func newWindowsProfile() (*windowsProfile, error) {
+// Win32 的 HRESULT 固定为 32 位，Proc.Call 则以指针宽度返回寄存器值。
+func profileStatusError(operation string, status uintptr) error {
+	if status&0x80000000 != 0 {
+		return fmt.Errorf("%s失败：HRESULT 0x%08x", operation, status&0xffffffff)
+	}
+	return nil
+}
+
+// internet 为 true 时额外授予 internetClient 与 lpacIdentityServices：前者只允许出站访问公网，
+// AppContainer 网络隔离仍阻止本机回环与局域网（未授予 privateNetworkClientServer）；
+// 后者让 LPAC 进程能通过 SSPI 使用 SChannel，否则 TLS 握手报“要求的安全包不存在”。
+func newWindowsProfile(internet bool) (*windowsProfile, error) {
 	if err := winCreateProfile.Find(); err != nil {
 		return nil, err
 	}
-	capabilities, err := windowsRegistryReadCapability()
-	if err != nil {
-		return nil, err
+	var capabilities []windows.SIDAndAttributes
+	names := []string{"registryRead", "lpacInstrumentation"}
+	if internet {
+		names = append(names, "internetClient", "lpacIdentityServices")
+	}
+	for _, name := range names {
+		grant, err := windowsCapability(name)
+		if err != nil {
+			return nil, err
+		}
+		capabilities = append(capabilities, grant...)
 	}
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
@@ -104,10 +124,10 @@ func newWindowsProfile() (*windowsProfile, error) {
 	value, _ := windows.UTF16PtrFromString(name)
 	var sid *windows.SID
 	status, _, _ := winCreateProfile.Call(uintptr(unsafe.Pointer(value)), uintptr(unsafe.Pointer(value)), uintptr(unsafe.Pointer(value)), 0, 0, uintptr(unsafe.Pointer(&sid)))
-	if int32(status) < 0 {
-		return nil, fmt.Errorf("创建 AppContainer 身份失败：HRESULT 0x%08x", uint32(status))
+	if err := profileStatusError("创建 AppContainer 身份", status); err != nil {
+		return nil, err
 	}
-	return &windowsProfile{name: name, sid: sid, capabilities: capabilities}, nil
+	return &windowsProfile{name: name, sid: sid, capabilities: capabilities, internet: internet}, nil
 }
 
 func (p *windowsProfile) close() error {
@@ -118,10 +138,7 @@ func (p *windowsProfile) close() error {
 	status, _, _ := winDeleteProfile.Call(uintptr(unsafe.Pointer(name)))
 	winFreeSID.Call(uintptr(unsafe.Pointer(p.sid)))
 	p.sid = nil
-	if int32(status) < 0 {
-		return fmt.Errorf("删除 AppContainer 身份失败：HRESULT 0x%08x", uint32(status))
-	}
-	return nil
+	return profileStatusError("删除 AppContainer 身份", status)
 }
 
 type windowsDesktop struct {
@@ -407,8 +424,17 @@ func runWindowsProcess(ctx context.Context, profile *windowsProfile, desktop *wi
 		return -1, err
 	}
 	defer attributes.Delete()
-	// registryRead 仅用于初始化 Win32 运行库（包括 Winsock 目录）；不授予任何网络能力。
-	capabilities := windowsSecurityCapabilities{AppContainerSID: profile.sid, Capabilities: &profile.capabilities[0], CapabilityCount: uint32(len(profile.capabilities))}
+	// registryRead 用于 Win32 初始化；lpacInstrumentation 用于 PowerShell 的 ETW 注册。
+	// 两者都是固定的系统能力，不开放网络，不修改全局设备或 ETW 提供者的 ACL；
+	// 只有显式请求联网的沙箱才额外带 internetClient 与 lpacIdentityServices。
+	expected := 2
+	if profile.internet {
+		expected = 4
+	}
+	if len(profile.capabilities) != expected {
+		return -1, fmt.Errorf("Windows 进程的能力必须恰为 registryRead、lpacInstrumentation（联网时另加 internetClient、lpacIdentityServices）")
+	}
+	capabilities := windowsSecurityCapabilities{AppContainerSID: profile.sid, Capabilities: &profile.capabilities[0], CapabilityCount: uint32(expected)}
 	policy := uint32(1)
 	for _, attribute := range []struct {
 		key   uintptr

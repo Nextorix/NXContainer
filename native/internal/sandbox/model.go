@@ -7,7 +7,7 @@
  * MoyuZJ <moyuzj@nextorix.dev> @Nextorix
  * Made in China with ♥
  *
- * Copyright (C) 2026 Nextorix LLC.
+ * Copyright (C) 2026 Nextorix
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
@@ -43,7 +43,12 @@ type Mount struct {
 	Name   string `json:"name"`
 	Source string `json:"source"`
 	Access string `json:"access"`
+	Alias  string `json:"alias,omitempty"`
+	// Target 为 Linux 沙箱内的挂载位置（如多个 Agent 共用的 /Agents/Shared/x），缺省为 /Agents/<agentId>/<name>。
+	Target string `json:"target,omitempty"`
 }
+
+var targetPattern = regexp.MustCompile(`^/Agents(/[A-Za-z0-9][A-Za-z0-9_-]{0,63}){2,8}$`)
 
 type Limits struct {
 	TimeoutMs      int    `json:"timeoutMs"`
@@ -96,6 +101,7 @@ type Capabilities struct {
 	ReadOnlyMounts    bool   `json:"readOnlyMounts"`
 	PrivateFilesystem bool   `json:"privateFilesystem"`
 	NetworkNone       bool   `json:"networkNone"`
+	NetworkInternet   bool   `json:"networkInternet"`
 	Desktop           bool   `json:"desktop"`
 	ResourceQuotas    bool   `json:"resourceQuotas"`
 	Reason            string `json:"reason,omitempty"`
@@ -158,8 +164,8 @@ func ValidateConfig(c Config) error {
 	if !idPattern.MatchString(c.AgentID) {
 		return problem("INVALID_CONFIG", "agentId 不合法")
 	}
-	if c.Network != "none" || c.Desktop {
-		return problem("UNSUPPORTED_CAPABILITY", "只支持断网的非图形执行环境")
+	if (c.Network != "none" && c.Network != "internet") || c.Desktop {
+		return problem("UNSUPPORTED_CAPABILITY", "只支持断网或仅访问公网的非图形执行环境")
 	}
 	if len(c.Mounts) < 1 || len(c.Mounts) > 32 {
 		return problem("INVALID_CONFIG", "挂载数量必须在 1 到 32 之间")
@@ -181,7 +187,7 @@ func ValidateConfig(c Config) error {
 		if m.Access != "read-only" && m.Access != "read-write" {
 			return problem("INVALID_CONFIG", "挂载权限不合法")
 		}
-		if m.Name == "workspace" && m.Access == "read-write" {
+		if m.Name == "workspace" {
 			workspace = true
 		}
 		if filepath.Clean(m.Source) != m.Source {
@@ -190,14 +196,58 @@ func ValidateConfig(c Config) error {
 		if err := validateDirectory(m.Source); err != nil {
 			return err
 		}
+		if m.Alias != "" {
+			if runtime.GOOS != "windows" || !filepath.IsAbs(m.Alias) || filepath.Clean(m.Alias) != m.Alias {
+				return problem("INVALID_CONFIG", "显示联接只支持 Windows 绝对规范路径")
+			}
+			parent := filepath.Dir(m.Alias)
+			if err := validateDirectory(parent); err != nil {
+				return err
+			}
+			if contained(parent, m.Source) || contained(m.Source, parent) {
+				return problem("MOUNT_CONFLICT", "联接父目录与挂载源不能重叠")
+			}
+			_, err := os.Readlink(m.Alias)
+			if err != nil {
+				return problem("UNSAFE_PATH", "显示路径必须是由可信宿主创建的目录联接")
+			}
+			target, err := os.Stat(m.Alias)
+			sourceInfo, sourceErr := os.Stat(m.Source)
+			if err != nil || sourceErr != nil || !os.SameFile(target, sourceInfo) {
+				return problem("UNSAFE_PATH", "显示联接必须指向当前挂载源")
+			}
+		}
+		if m.Target != "" {
+			own := path.Join("/Agents", c.AgentID)
+			if runtime.GOOS == "windows" || m.Name == "workspace" || !targetPattern.MatchString(m.Target) {
+				return problem("INVALID_CONFIG", "target 只支持 Linux 上 workspace 以外的挂载，且必须是 /Agents 下的规范路径")
+			}
+			if m.Target == own || strings.HasPrefix(m.Target, own+"/") {
+				return problem("MOUNT_CONFLICT", "target 不能位于本 Agent 的默认挂载目录内")
+			}
+		}
 		for _, previous := range c.Mounts[:i] {
 			if contained(previous.Source, m.Source) || contained(m.Source, previous.Source) {
 				return problem("MOUNT_CONFLICT", "挂载源不能重叠")
 			}
+			a, b := mountPath(c, previous.Name), mountPath(c, m.Name)
+			if runtime.GOOS != "windows" && (a == b || strings.HasPrefix(a, b+"/") || strings.HasPrefix(b, a+"/")) {
+				return problem("MOUNT_CONFLICT", "沙箱内的挂载位置不能重叠")
+			}
+		}
+	}
+	for _, m := range c.Mounts {
+		if m.Alias == "" {
+			continue
+		}
+		for _, other := range c.Mounts {
+			if contained(filepath.Dir(m.Alias), other.Source) || contained(other.Source, filepath.Dir(m.Alias)) {
+				return problem("MOUNT_CONFLICT", "显示联接父目录不能位于挂载源内")
+			}
 		}
 	}
 	if !workspace {
-		return problem("INVALID_CONFIG", "缺少可写 workspace 挂载")
+		return problem("INVALID_CONFIG", "缺少 workspace 挂载（可读写或只读）")
 	}
 	return nil
 }
@@ -218,10 +268,18 @@ func mountPath(c Config, name string) string {
 	if runtime.GOOS == "windows" {
 		for _, mount := range c.Mounts {
 			if mount.Name == name {
+				if mount.Alias != "" {
+					return mount.Alias
+				}
 				return mount.Source
 			}
 		}
 		return ""
+	}
+	for _, mount := range c.Mounts {
+		if mount.Name == name && mount.Target != "" {
+			return mount.Target
+		}
 	}
 	return path.Join("/Agents", c.AgentID, name)
 }
@@ -247,7 +305,10 @@ func resolveCwd(c Config, cwd string) (string, error) {
 				}
 				return filepath.Join(mountPath(c, m.Name), filepath.FromSlash(parts[1])), nil
 			}
-			return path.Join("/Agents", c.AgentID, cwd), nil
+			if len(parts) == 1 {
+				return mountPath(c, m.Name), nil
+			}
+			return path.Join(mountPath(c, m.Name), parts[1]), nil
 		}
 	}
 	return "", problem("PERMISSION_DENIED", "cwd 不属于已授权挂载")

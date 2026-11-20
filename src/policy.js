@@ -7,7 +7,7 @@
  * MoyuZJ <moyuzj@nextorix.dev> @Nextorix
  * Made in China with ♥
  *
- * Copyright (C) 2026 Nextorix LLC.
+ * Copyright (C) 2026 Nextorix
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
@@ -16,6 +16,7 @@ import { realpath, lstat } from 'node:fs/promises';
 import { fail } from './errors.js';
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+const TARGET = /^\/Agents(\/[A-Za-z0-9][A-Za-z0-9_-]{0,63}){2,8}$/;
 export const MAX_FILE_BYTES = 1024 * 1024;
 
 export function object(value, keys, label) {
@@ -66,7 +67,8 @@ export async function directory(input) {
 export async function normalizePolicy(input, allowedRoots, experimental) {
   object(input, ['agentId', 'mounts', 'network', 'desktop', 'limits'], '沙箱配置');
   if (typeof input.agentId !== 'string' || !ID.test(input.agentId)) fail('INVALID_CONFIG', 'agentId 必须是 1～64 位字母、数字、下划线或连字符');
-  if ((input.network ?? 'none') !== 'none') fail('UNSUPPORTED_CAPABILITY', '当前只支持完全断网');
+  const network = input.network ?? 'none';
+  if (!['none', 'internet'].includes(network)) fail('UNSUPPORTED_CAPABILITY', '网络只能是 none（断网）或 internet（仅公网）');
   if (input.desktop !== undefined && input.desktop !== false) fail('UNSUPPORTED_CAPABILITY', '当前版本尚不支持图形桌面');
   if (!Array.isArray(input.mounts) || input.mounts.length < 1 || input.mounts.length > 32) {
     fail('INVALID_CONFIG', '需要提供 1～32 个挂载目录');
@@ -76,22 +78,50 @@ export async function normalizePolicy(input, allowedRoots, experimental) {
   const names = new Set();
   const mounts = [];
   for (const mount of input.mounts) {
-    object(mount, ['source', 'name', 'access'], '挂载');
+    object(mount, ['source', 'name', 'access', 'alias', 'target'], '挂载');
     if (typeof mount.name !== 'string' || !ID.test(mount.name) || names.has(mount.name.toLowerCase())) fail('INVALID_CONFIG', '挂载名不合法或重复');
     names.add(mount.name.toLowerCase());
     if (!['read-only', 'read-write'].includes(mount.access)) fail('INVALID_CONFIG', '挂载权限必须是 read-only 或 read-write');
     const source = await directory(mount.source);
     if (!allowedRoots.some((root) => within(root, source))) fail('PERMISSION_DENIED', '挂载源不在管理方授权的目录范围内');
     if (mounts.some((other) => overlap(other.source, source))) fail('MOUNT_CONFLICT', '同一沙箱不能挂载重叠或重复的源目录');
-    mounts.push(Object.freeze({ source, name: mount.name, access: mount.access }));
+    let alias;
+    if (mount.alias !== undefined) {
+      if (process.platform !== 'win32' || typeof mount.alias !== 'string' || !path.isAbsolute(mount.alias) || mount.alias.includes('\0')) fail('INVALID_CONFIG', 'alias 只支持 Windows 上由可信宿主创建的绝对目录联接');
+      alias = path.resolve(mount.alias);
+      const parent = await directory(path.dirname(alias));
+      if (!allowedRoots.some((root) => within(root, parent))) fail('PERMISSION_DENIED', '联接父目录不在管理方授权范围内');
+      if (!(await lstat(alias)).isSymbolicLink() || (await realpath(alias)).toLowerCase() !== source.toLowerCase()) fail('UNSAFE_PATH', 'alias 必须是直接指向当前挂载源的目录联接');
+      if (overlap(parent, source)) fail('MOUNT_CONFLICT', '联接父目录与挂载源不能重叠');
+    }
+    let target;
+    if (mount.target !== undefined) {
+      // Linux 沙箱内的挂载位置，供多个 Agent 在同一路径看到同一目录；不是宿主路径
+      if (process.platform === 'win32' || mount.name === 'workspace' || typeof mount.target !== 'string' || !TARGET.test(mount.target)) {
+        fail('INVALID_CONFIG', 'target 只支持 Linux 上 workspace 以外的挂载，且必须是 /Agents 下的规范路径');
+      }
+      const own = `/Agents/${input.agentId}`;
+      if (mount.target === own || mount.target.startsWith(`${own}/`)) fail('MOUNT_CONFLICT', 'target 不能位于本 Agent 的默认挂载目录内');
+      target = mount.target;
+    }
+    mounts.push(Object.freeze({ source, name: mount.name, access: mount.access, ...(alias ? { alias } : {}), ...(target ? { target } : {}) }));
   }
-  if (!mounts.some((m) => m.name === 'workspace' && m.access === 'read-write')) {
-    fail('INVALID_CONFIG', '必须提供名为 workspace 的读写工作区');
+  if (process.platform !== 'win32') {
+    const at = (m) => m.target || `/Agents/${input.agentId}/${m.name}`;
+    for (const a of mounts) for (const b of mounts) {
+      if (a !== b && (at(a) === at(b) || at(a).startsWith(`${at(b)}/`))) fail('MOUNT_CONFLICT', '沙箱内的挂载位置不能重叠');
+    }
+  }
+  for (const mount of mounts) {
+    if (mount.alias && mounts.some((other) => overlap(path.dirname(mount.alias), other.source))) fail('MOUNT_CONFLICT', '显示联接的父目录不能位于任何挂载源内');
+  }
+  if (!mounts.some((m) => m.name === 'workspace')) {
+    fail('INVALID_CONFIG', '必须提供名为 workspace 的工作区（可读写或只读）');
   }
   return Object.freeze({
     agentId: input.agentId,
     mounts: Object.freeze(mounts),
-    network: 'none',
+    network,
     desktop: false,
     experimental,
     limits: Object.freeze({
@@ -107,7 +137,8 @@ export async function normalizePolicy(input, allowedRoots, experimental) {
 export function assertSharing(policy, existing) {
   for (const other of existing) {
     if (other.agentId.toLowerCase() === policy.agentId.toLowerCase()) fail('AGENT_EXISTS', '该 Agent 已有沙箱');
-    for (const a of policy.mounts) for (const b of other.mounts) {
+    const grants = (p) => p.mounts.flatMap((m) => [m, ...(m.alias ? [{ source: path.dirname(m.alias), access: 'read-only' }] : [])]);
+    for (const a of grants(policy)) for (const b of grants(other)) {
       if (!overlap(a.source, b.source)) continue;
       if (a.access === 'read-write' && b.access === 'read-write') {
         fail('MOUNT_CONFLICT', '不同 Agent 不能拥有重叠的可写目录');

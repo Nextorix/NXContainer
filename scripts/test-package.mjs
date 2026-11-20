@@ -7,7 +7,7 @@
  * MoyuZJ <moyuzj@nextorix.dev> @Nextorix
  * Made in China with ♥
  *
- * Copyright (C) 2026 Nextorix LLC.
+ * Copyright (C) 2026 Nextorix
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
@@ -28,16 +28,21 @@ for (const target of ['win32-x64.exe', 'win32-arm64.exe', 'linux-x64', 'linux-ar
 const temp = await realpath(await mkdtemp(path.join(os.tmpdir(), 'nx-package-')));
 const application = path.join(temp, 'consumer application');
 const cache = path.join(temp, 'npm-cache');
+const slow = process.env.NXCONTAINER_TEST_SLOW === '1';
 function run(args, cwd, withoutToolchain = false) {
-  const env = { ...process.env, NODE_PATH: '', NODE_OPTIONS: '' };
+  // 保持宿主 NODE_OPTIONS 不可注入；TCG 模式只用固定的解释执行选项。
+  const env = { ...process.env, NODE_PATH: '', NODE_OPTIONS: slow ? '--jitless' : '' };
   if (withoutToolchain) {
     for (const key of Object.keys(env)) if (key.toUpperCase() === 'PATH') delete env[key];
     env.PATH = '';
   }
   const result = spawnSync(process.execPath, args, {
-    cwd, encoding: 'utf8', timeout: 120_000, maxBuffer: 4 * 1024 * 1024, env,
+    cwd, encoding: 'utf8', timeout: slow ? 600_000 : 120_000, maxBuffer: 4 * 1024 * 1024, env,
   });
-  if (result.error || result.status !== 0) throw new Error(`依赖库验收命令失败：${result.stderr || result.stdout}`, { cause: result.error });
+  if (result.error || result.status !== 0) {
+    const step = withoutToolchain ? '消费端' : `npm ${args[1]}`;
+    throw new Error(`依赖库验收失败（${step}）：${result.error?.message ?? `退出码 ${result.status}`}\n${result.stderr || result.stdout}`, { cause: result.error });
+  }
   return result.stdout;
 }
 try {

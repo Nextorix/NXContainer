@@ -7,7 +7,7 @@
  * MoyuZJ <moyuzj@nextorix.dev> @Nextorix
  * Made in China with ♥
  *
- * Copyright (C) 2026 Nextorix LLC.
+ * Copyright (C) 2026 Nextorix
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
@@ -30,7 +30,7 @@ try {
   assert.equal(capabilities.desktop, false);
   const config = { agentId: 'external-a', mounts: [{ name: 'workspace', source: path.join(root, 'a'), access: 'read-write' }] };
   if (!capabilities.exec) {
-    assert.notEqual(process.platform, 'win32', capabilities.reason);
+    assert.ok(process.platform !== 'win32' && process.env.NXCONTAINER_REQUIRE_LINUX !== '1', capabilities.reason);
     await assert.rejects(nx.createSandbox(config), { code: 'BACKEND_UNAVAILABLE' });
     console.log('包导入及不可用报告通过，未执行隔离任务：', capabilities.reason);
   } else {
@@ -42,6 +42,11 @@ try {
     await a.writeFile('workspace', '说明.txt', '来自独立消费应用');
     assert.equal((await b.readFile('reference', '说明.txt')).toString(), '来自独立消费应用');
     await assert.rejects(b.writeFile('reference', '说明.txt', '禁止修改'), (error) => error instanceof NXContainerError && error.code === 'PERMISSION_DENIED');
+    const binary = Buffer.alloc(1024 * 1024);
+    for (let i = 0; i < binary.length; i++) binary[i] = i & 255;
+    await a.writeFile('workspace', '边界.bin', binary);
+    assert.deepEqual(await b.readFile('reference', '边界.bin'), binary);
+    await assert.rejects(a.writeFile('workspace', '边界.bin', Buffer.alloc(binary.length + 1)), { code: 'FILE_TOO_LARGE' });
     const command = process.platform === 'win32' ? ['cmd.exe', '/d', '/c', 'echo', 'NX-PACKAGE-OK'] : ['/bin/sh', '-c', 'printf NX-PACKAGE-OK'];
     const output = [];
     const result = await a.exec(command, { onOutput: ({ data }) => output.push(data) });

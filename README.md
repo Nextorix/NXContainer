@@ -7,7 +7,7 @@
  * MoyuZJ <moyuzj@nextorix.dev> @Nextorix
  * Made in China with ♥
  *
- * Copyright (C) 2026 Nextorix LLC.
+ * Copyright (C) 2026 Nextorix
  * SPDX-License-Identifier: GPL-3.0-or-later
  -->
 
@@ -15,8 +15,8 @@
 
 面向 LLM 智能体的轻量原生沙箱依赖库。任何 Node.js 应用都可以通过 `import { NXContainer } from 'nxcontainer'` 使用，无需 LMCenter、Cordis、HTTP 服务或 GUI。ESM SDK 通过私有管道调用包内的 Go 执行器，不使用虚拟机，没有第三方 npm 依赖；Windows 原生 API 使用 `golang.org/x/sys/windows`。
 
-> **当前版本：0.1.0-alpha.1，技术验证阶段，不是已经完成安全验收的跨平台沙箱。**
-> Windows 需要开启 `allowExperimentalWindows`。**Linux 标记为待验证**：已有实验性后端和交叉编译产物，但尚无 Linux 实机验收，使用需显式开启 `allowExperimentalLinux`。缺少能力时明确拒绝，不降级为宿主命令。不要用于真实敏感数据或对抗性生产负载。
+> **当前版本：0.1.0-alpha.2，技术验证阶段，不是已经完成安全验收的跨平台沙箱。**
+> Windows 需要开启 `allowExperimentalWindows`。Linux 已在 Alpine 3.24 amd64/arm64 虚拟机中完成限定环境的实际运行验收（见验证记录），其他发行版与全面安全验收仍未完成，使用需显式开启 `allowExperimentalLinux`。缺少能力时明确拒绝，不降级为宿主命令。不要用于真实敏感数据或对抗性生产负载。
 
 ## 依赖库范围
 
@@ -29,13 +29,13 @@
 |---|---|
 | Windows x64 | 部分实机验证，仍为实验版本 |
 | Windows arm64 | 待验证，仅交叉编译 |
-| Linux x64 / arm64 | **待验证**，仅交叉编译及非运行态测试 |
+| Linux x64 / arm64 | Alpine 双架构虚拟机的运行验收已通过；其他环境及全面安全验收待完成 |
 
 `capabilities().validation` 分别使用 `partial`、`pending`、`unsupported` 描述项目验证进度；`exec` 等字段另行描述当前机器的能力自检结果。自检通过不会自动将 Linux 从“待验证”改为“已验证”。
 
 ## 当前能力
 
-| 能力 | Windows | Linux amd64 / arm64（待验证） |
+| 能力 | Windows | Linux amd64 / arm64（实验性） |
 |---|---|---|
 | Node.js ESM SDK、类型声明、配置校验 | 已实现 | 已实现 |
 | 能力检测、缺失能力明确拒绝 | 已实现 | 已实现 |
@@ -44,6 +44,7 @@
 | 文件接口 | 在 LPAC 内通过 Go `os.Root` 执行 | 在沙箱内通过 Go `os.Root` 执行 |
 | 独立 HOME、临时目录和环境 | 每次执行独立、结束后清除 | 每次执行独立、结束后清除 |
 | 默认断网 | 不授予网络能力，已测试宿主回环连接被拒绝 | network namespace + seccomp，禁止 socket 创建 |
+| 可选联网（`network: 'internet'`） | 额外授予 `internetClient` 与 `lpacIdentityServices`，只能出站访问公网；已测试宿主回环仍被拒绝 | 仍在独立网络命名空间中，经沙箱内中继与宿主侧 HTTP(S) 代理访问公网（设置 `HTTPS_PROXY` 等环境变量），拒绝回环、私有网段、链路本地与本机地址；不遵循代理环境变量的程序、UDP 与 ICMP 无法联网 |
 | 超时、取消、输出预算 | Job Object 终止进程树 | 杀死隔离进程树 |
 | CPU、内存、进程数限制 | Job Object 硬限制 | 未实现，请求时明确拒绝 |
 | 工作区磁盘硬配额 | 未实现 | 未实现 |
@@ -105,12 +106,12 @@ Windows 制作的 npm 包可能丢失 Linux 二进制执行位。Linux 首次使
 - 强制杀死原生执行器、断电、恶意文件 ACL 或清理失败仍可能需要宿主人工恢复；尚无持久恢复日志。
 - 默认 Job 限制：512 MiB 提交内存、32 个进程、50% 总 CPU。可通过 `memoryBytes`（64 MiB～8 GiB）、`maxProcesses`（1～256）、`cpuPercent`（1～100）调整。没有磁盘配额或完整内核资源预算。
 - `desktopIsolation: true` 只表示私有桌面的安全边界，不表示截图、输入或持久 GUI API 可用。
-- Windows 返回真实授权路径，尚未虚拟映射为 `C:\Agents\...`；必须使用 `sandbox.paths`。
+- Windows 默认返回真实授权路径；可信宿主可为挂载配置 `alias` 显示联接（见下文），例如 `C:\Agents\<UUID>\workspace`。必须使用 `sandbox.paths`。
 - portable Node 的普通运行与继承标准流的子进程已测试。其默认管道使用全局命名管道，当前会被拒绝并可能在 libuv 中重试到超时；`stdio: 'ignore'` 访问 NUL 也会被拒绝。使用 `stdio: 'inherit'` 或授权文件，不会为兼容软件而放开全局 IPC/设备。
 
 Windows 构造选项使用 `allowExperimentalWindows: true`，目录使用 Windows 绝对路径；例如执行 `sandbox.exec(['cmd.exe', '/d', '/c', 'echo', 'NXContainer'])`。临时工作区示例同时支持 Windows 和 Linux。
 
-### Linux 运行前提（待验证）
+### Linux 运行前提（实验性，已验证环境见记录）
 
 - 原生 Linux 内核，允许非特权 user namespace、PID、network、IPC、UTS、cgroup namespace 和 seccomp。
 - 安装发行版提供的非 setuid `bubblewrap`，位置为 `/usr/bin/bwrap` 或 `/bin/bwrap`。
@@ -121,13 +122,13 @@ Windows 构造选项使用 `allowExperimentalWindows: true`，目录使用 Windo
 
 `capabilities()` 会实际启动一个最小隔离进程进行自检，而不只是检测 `bwrap` 是否存在。自检不是全面安全审计。
 
-在真正的 Linux 测试机上运行：
+在满足隔离前提的 Linux 测试机或独立虚拟机客体中运行：
 
 ```sh
 NXCONTAINER_REQUIRE_RUNTIME=1 NXCONTAINER_REQUIRE_LINUX=1 npm test
 ```
 
-这会将执行器缺失、隔离能力缺失或测试机不是 Linux 视为失败。普通 `npm test` 在 Windows 上会明确跳过 Linux 集成测试，并标注待验证。
+这会将执行器缺失、隔离能力缺失或测试机不是 Linux 视为失败。普通 `npm test` 在 Windows 上会明确跳过 Linux 集成测试；跳过不算该平台验收。
 
 ## 作为依赖导入
 
@@ -148,7 +149,7 @@ import { NXContainer } from 'nxcontainer';
 也可以在消费应用中安装本地打包产物，不访问 npm 注册表：
 
 ```sh
-npm install /absolute/path/nxcontainer-0.1.0-alpha.1.tgz --offline --ignore-scripts
+npm install /absolute/path/nxcontainer-0.1.0-alpha.2.tgz --offline --ignore-scripts
 ```
 
 带有本机二进制的分发包在消费端只需要 Node.js，无需 Go 工具链；Linux 仍需系统提供 bubblewrap。TypeScript 应用使用 Node.js 类型及 `NodeNext` 模块解析；类型入口随包分发。公开导出为 `NXContainer`、`NXContainerError` 和 `protocolVersion`，完整接口见 [`src/index.d.ts`](src/index.d.ts)。
@@ -167,7 +168,7 @@ const root = process.platform === 'win32' ? 'D:\\AgentWorkspaces' : '/srv/agent-
 const nx = new NXContainer({
   allowedRoots: [root],
   allowExperimentalWindows: true,
-  allowExperimentalLinux: true, // Linux 后端仍待验证。
+  allowExperimentalLinux: true, // Linux 后端仍为实验性，验证范围见记录。
 });
 
 try {
@@ -222,12 +223,17 @@ try {
 - 为避免可写祖先下的目录被替换，共享目录必须是独立的挂载根，不能是其他 Agent 可写挂载的子目录或祖先。
 - 同一沙箱中的源目录不能重复或重叠，挂载名不区分大小写地判重。
 - 本版没有跨进程全局目录归属数据库。多个 SDK 实例或宿主进程之间的所有权协调由可信主程序负责。
-- Linux 返回 `/Agents/<agentId>/<挂载名>`，Windows 返回实际授权目录。调用方必须使用 `sandbox.paths`。
+- Linux 返回 `/Agents/<agentId>/<挂载名>`（或挂载的 `target`），Windows 返回 `alias` 或实际授权目录。调用方必须使用 `sandbox.paths`。
+- Linux 可选 `target`：workspace 以外的挂载在沙箱内的位置，必须是 `/Agents` 下至少两级的规范路径，不能位于本 Agent 的 `/Agents/<agentId>` 内，各挂载的位置不能重叠。用于让多个 Agent 在同一路径看到同一目录（例如共用的 `/Agents/Shared/<名称>`）；不同 Agent 仍不能同时拥有重叠的可写目录。
+- `workspace` 必须存在，但可以设为 `access: 'read-only'`。SDK 与原生协议都拒绝向只读工作区写入；shell 同样受 Linux 只读挂载／Windows LPAC ACL 约束。改变只读状态须先 dispose，再重新创建，不能在运行中修改策略。
+- Windows 可选 `alias`：可信主程序事先创建的目录联接，必须指向对应 source，父目录在 allowedRoots 内、祖先不可为链接，且不能与任何源目录重叠。库不创建或删除该联接，只临时授予联接读取与祖先路径（不含卷根）的属性读取／穿越（不授予祖先列目录、文件内容读取或写入）；结束通过稳定句柄恢复 DACL。涉及共同祖先的操作串行授权。此能力不是完整私有文件系统视图，也不能把不可信工作区内的联接当作授权源。
 - Windows 对相同源目录使用跨进程互斥量，在执行和 ACL 恢复期间持有；涉及共享源的任务会串行等待，不同源目录可并行。
 - 挂载表在沙箱句柄存续期间不可修改；先 `dispose()`，再用新策略创建。不承诺在不停止进程的情况下撤销已打开的文件句柄。
 - `dispose()` / `close()` 不删除宿主目录或文件，不代表删除 Agent。
 
 ### 执行与文件
+
+Windows PowerShell 5 在当前 LPAC 环境不兼容。使用 PowerShell 7 portable 时，由宿主把可信安装目录显式只读挂载，再执行其绝对路径，并设置 `DOTNET_EnableDiagnostics=0` 与 `POWERSHELL_TELEMETRY_OPTOUT=1`。库为 PowerShell 的 ETW 初始化增加固定的 `lpacInstrumentation` 能力；不更改全局 ETW／设备 ACL，默认不开放网络。程序是否兼容仍须实测，失败不得回退到宿主进程。
 
 - `exec(argv, options)` 不调用宿主 shell。需要 shell 语法时，显式执行隔离环境中的 `/bin/sh -c` 或 `cmd.exe /d /s /c`。
 - 最终 `stdout` / `stderr` 按 UTF-8 解码；传统 Windows 程序使用其他代码页时，应通过 `onOutput` 处理原始字节。
@@ -255,13 +261,13 @@ docs/                        协议与后续实施计划
 
 ## 当前不是这些东西
 
-NXContainer 不是虚拟机，不绕过宿主文件权限，不提供提权 shell，不把路径检查包装成 Windows 沙箱，不将不可信 Skill 加载到宿主 Node 进程，也不是业务应用或完整 GUI 产品。Linux 保持待验证；崩溃恢复日志、磁盘配额和其他安全加固仍有明确限制，不能因依赖库分发完成就宣称生产安全。
+NXContainer 不是虚拟机，不绕过宿主文件权限，不提供提权 shell，不把路径检查包装成 Windows 沙箱，不将不可信 Skill 加载到宿主 Node 进程，也不是业务应用或完整 GUI 产品。Linux 总体验证状态仍为 pending（已有的 Alpine 验收不代表广泛平台与安全验证完成）；崩溃恢复日志、磁盘配额和其他安全加固仍有明确限制，不能因依赖库分发完成就宣称生产安全。
 
 ## 作者与许可证
 
 - 作者：MoyuZJ <moyuzj@nextorix.dev> @Nextorix
 - Made in China with ♥
-- Copyright (C) 2026 Nextorix LLC.
+- Copyright (C) 2026 Nextorix
 - 许可证：GPL-3.0-or-later，全文见 [LICENSE](LICENSE)。
 
 源码和文档使用各自格式支持的文件头；`package.json` 使用作者及许可证元数据，生成的校验和文件、二进制与第三方许可证原文不插入注释。Go 运行时和 `golang.org/x/sys` 的 BSD 许可证原文随包放在 [licenses/Go-BSD.LICENSE](licenses/Go-BSD.LICENSE)。

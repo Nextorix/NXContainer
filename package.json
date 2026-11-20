@@ -1,9 +1,9 @@
 {
   "name": "nxcontainer",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "author": { "name": "MoyuZJ", "email": "moyuzj@nextorix.dev" },
   "license": "GPL-3.0-or-later",
-  "copyright": "Copyright (C) 2026 Nextorix LLC.",
+  "copyright": "Copyright (C) 2026 Nextorix",
   "description": "面向 LLM 智能体的轻量原生沙箱依赖库；Windows 实验性支持，Linux 待验证",
   "type": "module",
   "types": "./src/index.d.ts",

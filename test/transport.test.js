@@ -7,7 +7,7 @@
  * MoyuZJ <moyuzj@nextorix.dev> @Nextorix
  * Made in China with ♥
  *
- * Copyright (C) 2026 Nextorix LLC.
+ * Copyright (C) 2026 Nextorix
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
@@ -17,7 +17,9 @@ import { fileURLToPath } from 'node:url';
 import { invoke } from '../src/transport.js';
 
 const args = [fileURLToPath(new URL('./fixtures/runtime.mjs', import.meta.url))];
-const call = (operation, options) => invoke(process.execPath, { operation }, { args, timeoutMs: 5000, ...options });
+// TCG 下 Node 子进程冷启动可能超过 5 秒；显式超时用例仍按原值运行。
+const fixtureTimeoutMs = process.env.NXCONTAINER_TEST_SLOW === '1' ? 45_000 : 5_000;
+const call = (operation, options) => invoke(process.execPath, { operation }, { args, timeoutMs: fixtureTimeoutMs, ...options });
 
 test('流式字节不会破坏 UTF-8，子命令非零退出不是执行器崩溃', async () => {
   const chunks = [];
@@ -26,6 +28,12 @@ test('流式字节不会破坏 UTF-8，子命令非零退出不是执行器崩�
   assert.equal(value.stderr.toString(), '错误流');
   assert.equal(value.result.exitCode, 3);
   assert.equal(chunks.length, 3);
+});
+
+test('回调修改收到的字节不影响最终命令输出', async () => {
+  const value = await call('success', { onOutput: ({ data }) => data.fill(0) });
+  assert.equal(value.stdout.toString(), '中文输出');
+  assert.equal(value.stderr.toString(), '错误流');
 });
 
 test('严格处理协议错误与输出上限', async () => {

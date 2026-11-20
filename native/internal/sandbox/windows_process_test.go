@@ -9,7 +9,7 @@
  * MoyuZJ <moyuzj@nextorix.dev> @Nextorix
  * Made in China with ♥
  *
- * Copyright (C) 2026 Nextorix LLC.
+ * Copyright (C) 2026 Nextorix
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -29,6 +30,17 @@ import (
 
 	"golang.org/x/sys/windows"
 )
+
+func TestProfileStatusError(t *testing.T) {
+	for _, status := range []uintptr{0, 1, 0x7fffffff} {
+		if err := profileStatusError("测试", status); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := profileStatusError("测试", 0x80070005); err == nil || !strings.Contains(err.Error(), "0x80070005") {
+		t.Fatalf("应保留 HRESULT 的 32 位错误码：%v", err)
+	}
+}
 
 func TestWindowsJobSettings(t *testing.T) {
 	job, err := createWindowsJob(windowsProcessOptions{MemoryBytes: 128 * 1024 * 1024, Processes: 2, CPUPercent: 25})
@@ -81,6 +93,92 @@ func TestWindowsGuestBoundary(t *testing.T) {
 	t.Log("NX-BOUNDARY-OK")
 }
 
+func TestWindowsGuestLoopback(t *testing.T) {
+	if os.Getenv("NX_TEST_GUEST") != "1" {
+		t.Skip("仅在 LPAC 子进程中运行")
+	}
+	connection, err := net.DialTimeout("tcp", os.Getenv("NX_TEST_LOOPBACK"), 2*time.Second)
+	if err == nil {
+		connection.Close()
+		t.Fatal("能连接宿主回环服务")
+	}
+	t.Log("NX-LOOPBACK-OK")
+}
+
+// 联网沙箱只多 internetClient 与 lpacIdentityServices：宿主回环服务在两种模式下都不可达。
+func TestWindowsInternetProfileKeepsLoopbackClosed(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() {
+		for {
+			connection, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			connection.Close()
+		}
+	}()
+	source, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	program := filepath.Join(workspace, "loopback.exe")
+	data, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(program, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, internet := range []bool{false, true} {
+		profile, err := newWindowsProfile(internet)
+		if err != nil {
+			t.Fatal(err)
+		}
+		expected := 2
+		if internet {
+			expected = 4
+		}
+		if len(profile.capabilities) != expected {
+			t.Fatalf("能力数量为 %d，应为 %d", len(profile.capabilities), expected)
+		}
+		desktop, err := newWindowsDesktop(profile)
+		if err != nil {
+			profile.close()
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		grant, err := grantWindowsTree(ctx, workspace, profile.sid, false)
+		if err != nil {
+			cancel()
+			desktop.close()
+			profile.close()
+			t.Fatal(err)
+		}
+		env, err := windowsEnvironment(workspace, workspace, "loopback", map[string]string{"NX_TEST_GUEST": "1", "NX_TEST_LOOPBACK": listener.Addr().String()})
+		var stdout, stderr bytes.Buffer
+		exit := -1
+		if err == nil {
+			exit, err = runWindowsProcess(ctx, profile, desktop, windowsProcessOptions{Argv: []string{program, "-test.run=^TestWindowsGuestLoopback$", "-test.v"}, Directory: workspace, Environment: env, Stdout: &stdout, Stderr: &stderr, MemoryBytes: 512 * 1024 * 1024, Processes: 16, CPUPercent: 50})
+		}
+		cancel()
+		if cleanup := grant.close(); cleanup != nil {
+			t.Error(cleanup)
+		}
+		desktop.close()
+		if cleanup := profile.close(); cleanup != nil {
+			t.Error(cleanup)
+		}
+		if err != nil || exit != 0 || !strings.Contains(stdout.String(), "NX-LOOPBACK-OK") {
+			t.Fatalf("联网=%v 时回环测试失败：%d / %v / %s / %s", internet, exit, err, stdout.String(), stderr.String())
+		}
+	}
+}
+
 func TestWindowsProcessAndDesktopBoundary(t *testing.T) {
 	source, err := os.Executable()
 	if err != nil {
@@ -102,7 +200,7 @@ func TestWindowsProcessAndDesktopBoundary(t *testing.T) {
 	if copyErr != nil || closeErr != nil {
 		t.Fatal(copyErr, closeErr)
 	}
-	profile, err := newWindowsProfile()
+	profile, err := newWindowsProfile(false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +210,7 @@ func TestWindowsProcessAndDesktopBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer desktop.close()
-	other, err := newWindowsProfile()
+	other, err := newWindowsProfile(false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +243,7 @@ func TestWindowsProcessAndDesktopBoundary(t *testing.T) {
 }
 
 func TestWindowsLPACProcess(t *testing.T) {
-	profile, err := newWindowsProfile()
+	profile, err := newWindowsProfile(false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +292,7 @@ func TestWindowsLPACFileGrants(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	profile, err := newWindowsProfile()
+	profile, err := newWindowsProfile(false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +352,7 @@ func TestWindowsLPACFileGrants(t *testing.T) {
 		})
 	}
 	t.Run("并存身份不能读取另一身份的文件", func(t *testing.T) {
-		other, err := newWindowsProfile()
+		other, err := newWindowsProfile(false)
 		if err != nil {
 			t.Fatal(err)
 		}

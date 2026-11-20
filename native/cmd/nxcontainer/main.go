@@ -7,7 +7,7 @@
  * MoyuZJ <moyuzj@nextorix.dev> @Nextorix
  * Made in China with ♥
  *
- * Copyright (C) 2026 Nextorix LLC.
+ * Copyright (C) 2026 Nextorix
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
@@ -71,6 +71,10 @@ func readRequest(reader *bufio.Reader) (sandbox.Request, error) {
 }
 
 func main() {
+	// 联网沙箱内的网络中继：其后的参数是要执行的用户命令。
+	if len(os.Args) > 2 && os.Args[1] == "--net-relay" {
+		os.Exit(sandbox.NetRelay(os.Args[2:]))
+	}
 	if len(os.Args) != 2 {
 		fmt.Fprintln(os.Stderr, "用法：nxcontainer --capabilities | --stdio")
 		os.Exit(2)

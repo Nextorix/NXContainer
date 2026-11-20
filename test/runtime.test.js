@@ -7,7 +7,7 @@
  * MoyuZJ <moyuzj@nextorix.dev> @Nextorix
  * Made in China with ♥
  *
- * Copyright (C) 2026 Nextorix LLC.
+ * Copyright (C) 2026 Nextorix
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
@@ -18,6 +18,7 @@ import path from 'node:path';
 import { access, mkdtemp, mkdir, rm, writeFile, readFile, realpath } from 'node:fs/promises';
 import { NXContainer } from '../src/index.js';
 import { spawn } from 'node:child_process';
+import http from 'node:http';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 
@@ -61,11 +62,11 @@ test('本机执行器报告真实能力；不支持的平台不能触发宿主�
   }
 });
 
-test('Linux 待验证：原生隔离、只读共享、文件接口、取消与输出限制', async (t) => {
+test('Linux 原生隔离：只读共享、文件接口、取消与输出限制', async (t) => {
   const { root, nx } = await setup(t);
   if (process.platform !== 'linux') {
     if (process.env.NXCONTAINER_REQUIRE_LINUX === '1') assert.fail('Linux 验收必须在真实 Linux 测试机运行');
-    return t.skip('待验证：需要真实 Linux 内核与 bubblewrap');
+    return t.skip('当前平台非 Linux；此项需要 Linux 内核与 bubblewrap');
   }
   const capabilities = await capability(t, nx);
   if (!capabilities) return;
@@ -133,7 +134,8 @@ test('Linux 待验证：原生隔离、只读共享、文件接口、取消与�
   parent.stderr.on('data', (data) => { diagnostics += data.toString().slice(0, 4096 - diagnostics.length); });
   await new Promise((resolve, reject) => {
     let output = '';
-    const timer = setTimeout(() => reject(new Error(`测试父进程未就绪：${diagnostics}`)), 10000);
+    const startupMs = process.env.NXCONTAINER_TEST_SLOW === '1' ? 60_000 : 10_000;
+    const timer = setTimeout(() => reject(new Error(`测试父进程未就绪：${diagnostics}`)), startupMs);
     parent.once('error', (error) => { clearTimeout(timer); reject(error); });
     parent.once('close', () => { clearTimeout(timer); reject(new Error(`测试父进程提前退出：${diagnostics}`)); });
     parent.stdout.on('data', (data) => {
@@ -145,4 +147,37 @@ test('Linux 待验证：原生隔离、只读共享、文件接口、取消与�
   await exited;
   await new Promise((resolve) => setTimeout(resolve, 2500));
   await assert.rejects(access(path.join(bDir, 'escaped-after-parent')));
+});
+
+test('Linux 联网沙箱：只能经代理访问公网，宿主回环与内网不可达', async (t) => {
+  const { root, nx } = await setup(t);
+  if (process.platform !== 'linux') {
+    if (process.env.NXCONTAINER_REQUIRE_LINUX === '1') assert.fail('Linux 验收必须在真实 Linux 测试机运行');
+    return t.skip('当前平台非 Linux；此项需要 Linux 内核与 bubblewrap');
+  }
+  const capabilities = await capability(t, nx);
+  if (!capabilities) return;
+  if (!capabilities.exec) {
+    if (process.env.NXCONTAINER_REQUIRE_LINUX === '1') assert.fail(capabilities.reason);
+    return t.skip(capabilities.reason);
+  }
+  assert.equal(capabilities.networkInternet, true, capabilities.reason);
+  const server = http.createServer((request, response) => response.end('host-secret'));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const onlineDir = path.join(root, 'online'), offlineDir = path.join(root, 'offline');
+  await mkdir(onlineDir); await mkdir(offlineDir);
+  await writeFile(path.join(onlineDir, 'probe.py'), await readFile(new URL('./fixtures/network-probe.py', import.meta.url)));
+  const online = await nx.createSandbox({ ...config('online', onlineDir), network: 'internet' });
+  const offline = await nx.createSandbox(config('offline', offlineDir));
+  t.after(async () => { await online.dispose(); await offline.dispose(); });
+  const env = process.env.NXCONTAINER_TEST_INTERNET === '1' ? { NX_TEST_INTERNET: '1' } : {};
+  const result = await online.exec(['/usr/bin/python3', 'probe.py', String(server.address().port)], { cwd: 'workspace', env, timeoutMs: 60000 });
+  assert.equal(result.exitCode, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /NET-OK/);
+  // 联网沙箱的文件接口照常工作；断网沙箱没有代理，连 IPv4 socket 都不能创建
+  await online.writeFile('workspace', 'note.txt', '联网沙箱的文件接口');
+  assert.equal((await online.readFile('workspace', 'note.txt')).toString(), '联网沙箱的文件接口');
+  const denied = await offline.exec(['/usr/bin/python3', '-c', 'import os, socket\nassert "HTTPS_PROXY" not in os.environ\ntry: socket.socket()\nexcept PermissionError: exit(0)\nexit(1)']);
+  assert.equal(denied.exitCode, 0, denied.stderr);
 });

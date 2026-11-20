@@ -7,7 +7,7 @@
  * MoyuZJ <moyuzj@nextorix.dev> @Nextorix
  * Made in China with ♥
  *
- * Copyright (C) 2026 Nextorix LLC.
+ * Copyright (C) 2026 Nextorix
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
@@ -22,14 +22,19 @@ export const protocolVersion: 1;
 export interface Mount {
   /** 由可信主程序指定的绝对宿主目录，不能来自模型参数。 */
   source: string;
-  /** 逻辑挂载名；workspace 必须存在且可写。 */
+  /** 逻辑挂载名；workspace 必须存在，可以只读（例如计划模式）。 */
   name: string;
   access: 'read-only' | 'read-write';
+  /** Windows 可选显示联接。必须由可信宿主创建、指向 source，父目录也须在 allowedRoots 内；不授予父目录写权限。 */
+  alias?: string;
+  /** Linux 可选的沙箱内挂载位置（/Agents 下的规范路径，如多个 Agent 共用的 /Agents/Shared/x）；不能用于 workspace，也不能位于本 Agent 的默认目录 /Agents/<agentId> 内。缺省为 /Agents/<agentId>/<name>。 */
+  target?: string;
 }
 export interface SandboxConfig {
   agentId: string;
   mounts: Mount[];
-  network?: 'none';
+  /** 默认 none 完全断网；internet 只允许出站访问公网，宿主回环与局域网仍不可达（Windows 授予 internetClient；Linux 经沙箱内的 HTTP(S) 代理，程序需遵循 HTTPS_PROXY 等环境变量）。 */
+  network?: 'none' | 'internet';
   /** 保留兼容字段；当前依赖库不提供完整 GUI，只接受 false。 */
   desktop?: false;
   limits?: { timeoutMs?: number; maxOutputBytes?: number; memoryBytes?: number; maxProcesses?: number; cpuPercent?: number };
@@ -55,6 +60,8 @@ export interface Capabilities {
   readOnlyMounts: boolean;
   privateFilesystem: boolean;
   networkNone: boolean;
+  /** 是否支持 network: 'internet'。 */
+  networkInternet: boolean;
   desktop: boolean;
   resourceQuotas: boolean;
   processQuotas: boolean;

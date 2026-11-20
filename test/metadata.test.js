@@ -7,7 +7,7 @@
  * MoyuZJ <moyuzj@nextorix.dev> @Nextorix
  * Made in China with ♥
  *
- * Copyright (C) 2026 Nextorix LLC.
+ * Copyright (C) 2026 Nextorix
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
@@ -37,7 +37,7 @@ test('源码和文档包含完整的作者与 GPL 文件头', async () => {
       'NXContainer',
       'MoyuZJ <moyuzj@nextorix.dev> @Nextorix',
       'Made in China with ♥',
-      'Copyright (C) 2026 Nextorix LLC.',
+      'Copyright (C) 2026 Nextorix',
       'SPDX-License-Identifier: GPL-3.0-or-later',
     ]) assert.ok(prefix.includes(marker), `${path.relative(root, name)} 缺少 ${marker}`);
     count++;
@@ -62,7 +62,7 @@ test('包使用合法 JSON 元数据并随包分发 GPL 正文', async () => {
   assert.equal(manifest.author.name, 'MoyuZJ');
   assert.equal(manifest.author.email, 'moyuzj@nextorix.dev');
   assert.equal(manifest.license, 'GPL-3.0-or-later');
-  assert.equal(manifest.copyright, 'Copyright (C) 2026 Nextorix LLC.');
+  assert.equal(manifest.copyright, 'Copyright (C) 2026 Nextorix');
   assert.ok(manifest.files.includes('LICENSE'));
   assert.ok(manifest.files.includes('licenses'));
   const thirdParty = await readFile(path.join(root, 'licenses/Go-BSD.LICENSE'), 'utf8');

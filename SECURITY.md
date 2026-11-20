@@ -7,7 +7,7 @@
  * MoyuZJ <moyuzj@nextorix.dev> @Nextorix
  * Made in China with ♥
  *
- * Copyright (C) 2026 Nextorix LLC.
+ * Copyright (C) 2026 Nextorix
  * SPDX-License-Identifier: GPL-3.0-or-later
  -->
 
@@ -15,7 +15,7 @@
 
 ## 发布状态
 
-当前为实验原型，未完成独立安全审计。Windows 已接通 LPAC 后端并通过当前开发机上的集成测试；Linux 明确标记为待验证（`validation: 'pending'`）。独立依赖库分发不等于完成独立安全审计。不能宣传为“所有命令绝不影响物理机”。
+当前为实验原型，未完成独立安全审计。Windows 已接通 LPAC 后端并通过当前开发机上的集成测试；Linux 已在 Alpine 3.24 amd64/arm64 虚拟机中完成限定配置的运行验收；总体平台验证仍为 `validation: 'pending'`，不代表其他发行版或全面安全验收已完成。独立依赖库分发不等于完成独立安全审计。不能宣传为“所有命令绝不影响物理机”。
 
 两端都与宿主共享内核，操作系统、bubblewrap 或运行时缺陷可能导致逃逸。Windows 有 Job Object CPU、提交内存和进程数限制，Linux 尚无这些硬配额；两端均无工作区磁盘硬配额和完整内核资源预算。恶意任务仍可能耗尽宿主资源。**超时与输出限制不能替代 cgroup 和存储配额。**
 
@@ -39,11 +39,13 @@
 - 每次操作创建随机、独立的 AppContainer SID；不同 Agent 不共用该 SID。不创建新的 Windows 用户。
 - 以挂起状态启动 LPAC，原子加入无逃逸选项的 Job，只继承单独的三条标准流句柄。
 - 恢复线程前永久移除除 `SeChangeNotifyPrivilege` 外的特权，再核验低完整性、无 UIAccess、AppContainer SID、LPAC 访问语义与能力列表。不能只把额外特权标为禁用，因为任务可能重新启用它们。
-- 唯一附加能力为初始化 Win32/Winsock 运行库所需的 `registryRead`；不授予任何网络能力。可读取操作系统允许该能力读取的注册表内容，不声称提供空注册表或私有系统镜像。
+- 固定附加能力为初始化 Win32/Winsock 所需的 `registryRead` 与 PowerShell ETW 注册所需的 `lpacInstrumentation`，恢复线程前核验准确列表；默认不授予任何网络能力，不修改全局 ETW／设备 ACL。
+- 仅当策略为 `network: 'internet'` 时再加 `internetClient`（出站访问公网）与 `lpacIdentityServices`（经 SSPI 使用 SChannel 建立 TLS）。不授予 `internetClientServer` 或 `privateNetworkClientServer`，AppContainer 网络隔离继续阻止宿主回环与局域网；联网后沙箱内程序可以把授权目录中的内容发送到公网，是否允许联网由消费应用按任务授权。可访问操作系统允许这些能力访问的注册表和诊断资源，不声称提供空注册表、完全私有 ETW 或私有系统镜像。
 - 授权树只增加当前包 SID 的读/执行或修改权限，不增加 WRITE_DAC / WRITE_OWNER。Windows 双重访问检查仍必须成立。
 - 通过 `os.Root` 与相对 NT 对象句柄打开目录项，拒绝重解析点和硬链接；使用非递归对象安全接口，避免按路径递归修改目录联接目标。
 - 目录 ACE 可被新对象继承。结束后恢复已有对象的 DACL，再移除新对象上的本次 SID；不回滚任务有意写入的数据。
-- 相同源目录的授权租约跨进程串行化；这不是跨管理器的 Agent 所有权数据库。
+- 相同源目录的授权租约跨进程串行化；配置显示联接时也锁定联接父目录的各级祖先，防止 DACL 恢复覆盖另一个活动租约。这不是跨管理器的 Agent 所有权数据库。
+- 可选显示联接由可信宿主创建，SDK 和原生端复核其指向当前授权源。联接自身只读；祖先（不含卷根）只临时增加该随机 SID 的 FILE_READ_ATTRIBUTES、FILE_TRAVERSE 与 SYNCHRONIZE，不增加列目录、文件内容读取或写入权限，不继承到子目录。通过打开的重解析点自身句柄修改联接 DACL，结束逐一恢复。祖先必须允许宿主 READ_CONTROL/WRITE_DAC；不满足时拒绝，不接管所有权。
 - 主进程退出、超时、取消、控制管道断开都会终止整个 Job；清理前检查 Job 活跃进程数。SDK 首先关闭控制管道，强制杀进程仅作为无响应时的最后措施。
 - 私有 Window Station/Desktop、低完整性标签和 Job UI 限制。测试分别验证了宿主及另一实例的屏幕、剪贴板和桌面枚举权限被拒绝，也验证了宿主进程的敏感句柄权限被拒绝。
 - `desktopIsolation` 不等于 GUI 功能验收；没有截图、输入、锁屏恢复或 GPU 接口。
@@ -62,7 +64,8 @@ Windows 没有私有文件系统视图或 PID 命名空间：实际路径和部�
 - `/dev` 由 bubblewrap 创建最小设备集；私有 `/tmp`、HOME、运行目录与共享内存 tmpfs 有单挂载大小上限。
 - 新终端会话，无宿主终端、桌面、SSH agent、Docker socket、环境凭据继承。
 - seccomp 校验 amd64/arm64 架构，拒绝 x32/兼容 ABI、socket 创建、ptrace、process_vm、keyring、内核管理和 io_uring 等入口；clone3 返回 ENOSYS 以允许 libc 回退。
-- 网络仅支持完全关闭。禁止创建 socket 包括 Unix socket，避免“只读挂载里的控制 socket 仍可连接”的旁路；匿名 socketpair 可用于本沙箱内部通信。
+- 默认完全断网：禁止创建 socket 包括 Unix socket，避免“只读挂载里的控制 socket 仍可连接”的旁路；匿名 socketpair 可用于本沙箱内部通信。
+- `network: 'internet'` 不共享宿主网络命名空间（共享会暴露本机回环服务与抽象 Unix socket）：沙箱仍在只有回环接口的独立网络命名空间中，seccomp 只额外放行 AF_INET / AF_INET6 的 socket，Unix、netlink、packet 等协议族照旧拒绝。沙箱内的中继（执行器自身）在回环上监听 HTTP 代理端口、设置 `HTTP(S)_PROXY`，把每个连接的描述符经 SEQPACKET 控制套接字交给宿主侧执行器；宿主侧只接受 IPv4 / IPv6 的 TCP 流式套接字，所以沙箱内程序拿到控制套接字也不能扩大权限。CONNECT 隧道与 `http://` 请求在实际连接时按解析出的 IP 拒绝回环、私有网段、链路本地（含云元数据地址）、保留网段与本机网卡地址，DNS 重绑定同样无效。只读挂载系统 CA 证书目录，不挂载 `/etc/ssl` 中的其他内容。不遵循代理环境变量的程序、UDP 与 ICMP 无法联网。联网后沙箱内程序可以把授权目录中的内容发送到公网，是否允许联网由消费应用按任务授权。
 - 超时、取消或控制管道关闭会停止 bubblewrap 进程组；bubblewrap 的父死亡机制和 PID namespace 负责清理内部进程。
 - 文件接口进入相同沙箱后运行 Go `os.Root`，不会在宿主中用字符串拼接实现文件访问。
 
@@ -75,7 +78,7 @@ Windows 没有私有文件系统视图或 PID 命名空间：实际路径和部�
 必须遵守：
 
 1. 不把整个磁盘、NXContainer/消费应用安装目录、运行时控制目录、鉴权目录授予 Agent 写权限。
-2. 挂载源必须存在，且源目录与祖先不得是符号链接或 junction。目录根和祖先不能由任何沙箱进程重命名或替换。
+2. 挂载源必须存在，且源目录与祖先不得是符号链接或 junction。目录根和祖先不能由任何沙箱进程重命名或替换。Windows `alias` 是单独的可信显示联接，不是挂载源；其父目录也在 allowedRoots 内，祖先不可为链接，不能与任何挂载源重叠，生命周期由主程序管理。
 3. 根的同级目录与父目录由可信宿主管理。配置校验到 bubblewrap 挂载之间依赖这个前提，不声称可抵抗恶意宿主并发替换目录。
 4. 不在授权目录中预放能别名到未授权文件的硬链接、设备节点、特殊挂载或其他危险宿主对象。主程序导入文件时必须自行审核这些对象。
 5. 同一实例拒绝重叠可写授权与可写祖先/子目录共享。多个实例、多个进程之间由主程序统一协调，不能通过创建第二个管理器绕开所有权规则。
@@ -83,6 +86,10 @@ Windows 没有私有文件系统视图或 PID 命名空间：实际路径和部�
 7. 清理、预览、索引、解压、导出这些文件的宿主代码也必须防御链接越界。NXContainer 不能替任意第三方宿主文件操作函数提供安全性。
 
 对工作区的写入本来就会改变宿主上的授权目录；这是有意开放的数据通道。安全目标是拒绝未授权访问，而不是声称所有物理磁盘都不会改变。
+
+## 只读工作区
+
+`workspace` 可使用 read-only，Linux 以只读 bind mount 执行，Windows 只授予读取与执行 ACL。SDK 与原生文件请求都会拒绝 write/mkdir/remove，shell 同样没有持久工作区写权限。运行时私有 HOME/TEMP 仍可写，不保留到下次调用。只读不是快照；可信宿主仍可能修改文件。修改访问类型必须释放旧沙盒并重新创建。
 
 ## 控制协议
 
@@ -105,4 +112,4 @@ Windows 没有私有文件系统视图或 PID 命名空间：实际路径和部�
 
 Windows SDK 集成测试见 `test/windows.test.js`，原生身份、权限、Job 与桌面边界测试见 `native/internal/sandbox/windows_process_test.go`。这些测试全部使用临时目录。
 
-本仓库另提供 Linux 集成测试，可用 `NXCONTAINER_REQUIRE_LINUX=1` 强制能力缺失时失败。当前开发环境是 Windows，Linux 实际执行保持待验证，后续在真实测试机上验收；不会因此声称该平台测试已经通过。
+本仓库另提供 Linux 集成测试，可用 `NXCONTAINER_REQUIRE_LINUX=1` 强制能力缺失时失败。已完成的 Alpine 双架构虚拟机结果见 `docs/verification.md`；不以交叉编译或 Windows 上的跳过代替 Linux 运行证据，也不把该结果扩展到其他发行版。
